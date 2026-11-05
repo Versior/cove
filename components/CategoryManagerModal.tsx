@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useModalA11y } from './useModalA11y';
 import { X, ArrowUp, ArrowDown, Trash2, Edit2, Plus, Check, Lock, Palette } from 'lucide-react';
-import { Category } from '../types';
+import { Category, Space } from '../types';
+import { DEFAULT_SPACE, spaceOfCategory } from '../services/spaces';
 import Icon from './Icon';
 import IconSelector from './IconSelector';
 import { hashCategoryPassword } from '../services/categoryLock';
@@ -15,6 +16,9 @@ interface CategoryManagerModalProps {
   onDeleteCategory: (id: string) => void;
   /** 从右键菜单「编辑」进入时，直接进入该分类的编辑态。 */
   initialEditId?: string;
+  /** 桌面列表与当前桌面：超过一个桌面时才显示归属选择。 */
+  spaces?: Space[];
+  currentSpaceId?: string;
 }
 
 const inputClass = 'rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-accent';
@@ -26,7 +30,11 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   onUpdateCategories,
   onDeleteCategory,
   initialEditId,
+  spaces = [DEFAULT_SPACE],
+  currentSpaceId = DEFAULT_SPACE.id,
 }) => {
+  const multiSpace = spaces.length > 1;
+  const spaceName = (cat: Category) => spaces.find(space => space.id === spaceOfCategory(cat.id, categories, spaces))?.name || '';
   const containerRef = useRef<HTMLDivElement>(null);
   useModalA11y(isOpen, onClose, containerRef);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -35,6 +43,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   /** 新密码：留空表示保持原状。 */
   const [editPassword, setEditPassword] = useState('');
   const [removeLock, setRemoveLock] = useState(false);
+  const [editSpaceId, setEditSpaceId] = useState('');
 
   const [newCatName, setNewCatName] = useState('');
   const [newCatPassword, setNewCatPassword] = useState('');
@@ -48,6 +57,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditIcon(cat.icon);
     setEditPassword('');
     setRemoveLock(false);
+    setEditSpaceId(spaceOfCategory(cat.id, categories, spaces));
   };
 
   useEffect(() => {
@@ -77,7 +87,9 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     onUpdateCategories(categories.map(c => {
       if (c.id !== editingId) return c;
       const passwordHash = removeLock ? undefined : nextHash ?? c.passwordHash;
-      return { ...c, name: editName.trim(), icon: editIcon, passwordHash };
+      // 只有顶层分类记录所在桌面，子分类跟随父分类
+      const spaceId = multiSpace && !c.parentId ? editSpaceId : c.spaceId;
+      return { ...c, name: editName.trim(), icon: editIcon, passwordHash, spaceId };
     }));
     setEditingId(null);
   };
@@ -90,6 +102,8 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       name: newCatName.trim(),
       icon: newCatIcon,
       passwordHash: newCatPassword.trim() ? await hashCategoryPassword(id, newCatPassword.trim()) : undefined,
+      // 新分类放进当前桌面
+      spaceId: multiSpace ? currentSpaceId : undefined,
     };
     onUpdateCategories([...categories, newCat]);
     setNewCatName('');
@@ -161,6 +175,14 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                         </label>
                       )}
                     </div>
+                    {multiSpace && !cat.parentId && (
+                      <label className="flex items-center gap-2 text-xs text-ink-soft">
+                        所在桌面
+                        <select value={editSpaceId} onChange={(e) => setEditSpaceId(e.target.value)} className={inputClass}>
+                          {spaces.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
+                        </select>
+                      </label>
+                    )}
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 pt-1">
@@ -168,6 +190,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     <span className="truncate text-sm font-medium text-ink">{cat.name}</span>
                     {cat.id === 'common' && <span className="text-xs text-ink-muted">默认分类，不可编辑</span>}
                     {cat.passwordHash && <Lock size={12} className="shrink-0 text-warn" aria-label="已设置显示锁" />}
+                    {multiSpace && !cat.parentId && <span className="shrink-0 rounded-full bg-raised px-1.5 py-0.5 text-[10px] text-ink-muted">{spaceName(cat)}</span>}
                   </div>
                 )}
               </div>

@@ -83,11 +83,11 @@ const parseFolderStructure = (text: string, links: Array<{ id: string; title: st
   const folders: FolderStructureSuggestion['folders'] = [];
   for (const folder of Array.isArray(data.folders) ? data.folders : []) {
     const name = cleanFolderName(String(folder?.name || ''));
-    const linkIds = Array.isArray(folder?.linkIds) ? folder.linkIds.map(String).filter((id: string) => validIds.has(id) && !used.has(id)) : [];
+    const linkIds: string[] = Array.isArray(folder?.linkIds) ? folder.linkIds.map(String).filter((id: string) => validIds.has(id) && !used.has(id)) : [];
     linkIds.forEach(id => used.add(id));
     if (name && linkIds.length) folders.push({ name, linkIds, reason: typeof folder?.reason === 'string' ? folder.reason.slice(0, 80) : undefined });
   }
-  const keep = Array.isArray(data.keepInParent) ? data.keepInParent.map(String).filter((id: string) => validIds.has(id) && !used.has(id)) : [];
+  const keep: string[] = Array.isArray(data.keepInParent) ? data.keepInParent.map(String).filter((id: string) => validIds.has(id) && !used.has(id)) : [];
   keep.forEach(id => used.add(id));
   return {
     rename: data.rename ? cleanFolderName(String(data.rename)) || undefined : undefined,

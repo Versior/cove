@@ -4,6 +4,9 @@ import type { CardStyle, Density, LinkItem } from '../types';
 import { DENSITY_TOKENS } from '../services/density';
 import { iconGradient, initialOf, paletteOf } from '../services/iconPalette';
 import { linkIconCandidates, useFaviconSrc } from '../services/favicon';
+import type { ServiceState } from '../services/linkStatus';
+
+export type CardServiceStatus = ServiceState | 'checking';
 
 interface LinkCardProps {
   link: LinkItem;
@@ -21,6 +24,8 @@ interface LinkCardProps {
   onEdit: (link: LinkItem) => void;
   onToggleSelect?: (id: string) => void;
   onContextMenu?: (event: React.MouseEvent, link: LinkItem) => void;
+  /** 开启了在线状态监测的书签才会传，见 services/linkStatus.ts。 */
+  serviceStatus?: CardServiceStatus;
 }
 
 const hostOf = (url: string) => {
@@ -118,6 +123,29 @@ const LaunchIcon: React.FC<{ link: LinkItem; density: Density }> = ({ link, dens
     </span>
   );
 };
+const STATUS_STYLE: Record<CardServiceStatus, string> = {
+  up: 'bg-emerald-500',
+  down: 'bg-red-500',
+  unknown: 'bg-slate-400',
+  checking: 'bg-slate-300 animate-pulse',
+};
+const STATUS_LABEL: Record<CardServiceStatus, string> = {
+  up: '在线',
+  down: '离线',
+  unknown: '无法探测（内网或本地地址）',
+  checking: '正在检测在线状态',
+};
+
+/** 在线状态小圆点：绿在线、红离线、灰无法探测。 */
+const StatusDot: React.FC<{ status: CardServiceStatus }> = ({ status }) => (
+  <span
+    role="img"
+    aria-label={STATUS_LABEL[status]}
+    title={STATUS_LABEL[status]}
+    className={`h-2 w-2 shrink-0 rounded-full ring-2 ring-white/80 dark:ring-black/40 ${STATUS_STYLE[status]}`}
+  />
+);
+
 const PinMark: React.FC<{ visible?: boolean }> = ({ visible }) =>
   visible ? <Pin size={10} className="shrink-0 fill-accent text-accent" /> : null;
 
@@ -132,8 +160,11 @@ const SelectBox: React.FC<{ selected?: boolean }> = ({ selected }) => (
 
 const LinkCard: React.FC<LinkCardProps> = ({
   link, cardStyle, selectable, selected, draggable, density = 'cozy',
-  onOpen, onEdit, onToggleSelect, onContextMenu, activatorRef,
+  onOpen, onEdit, onToggleSelect, onContextMenu, activatorRef, serviceStatus,
 }) => {
+  // 有备注时悬停显示：标题 + 备注
+  const tooltip = link.note?.trim() ? `${link.title}\n${link.note.trim()}` : undefined;
+  const statusDot = serviceStatus ? <StatusDot status={serviceStatus} /> : null;
   const tokens = DENSITY_TOKENS[density];
   const handleClick = (event: React.MouseEvent) => {
     if (selectable) {
@@ -198,6 +229,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
         onClick={handleClick}
         onKeyDown={handleKey}
         onContextMenu={event => onContextMenu?.(event, link)}
+        title={tooltip}
         className="group relative flex flex-col items-center gap-1.5 px-1 py-2"
       >
         {selectable && <div className="absolute left-1 top-1 z-10"><SelectBox selected={selected} /></div>}
@@ -205,7 +237,10 @@ const LinkCard: React.FC<LinkCardProps> = ({
         {/* 图标视图不放把手：把手下压会盖住图标。整张卡即拖拽区（8px 阈值，
             单击照常打开链接），拖拽功能保留但不占视觉空间。 */}
         {draggable && <span ref={activatorRef} className="hidden" aria-hidden="true" />}
-        <LaunchIcon link={link} density={density} />
+        <span className="relative">
+          <LaunchIcon link={link} density={density} />
+          {statusDot && <span className="absolute -right-0.5 -top-0.5">{statusDot}</span>}
+        </span>
         <span className="flex w-full items-center justify-center gap-1">
           {link.pinned ? <Pin size={9} className="shrink-0 fill-accent text-accent" /> : null}
           <span className="min-w-0 truncate text-center text-[12px] font-medium text-ink">{link.title}</span>
@@ -222,11 +257,13 @@ const LinkCard: React.FC<LinkCardProps> = ({
         onClick={handleClick}
         onKeyDown={handleKey}
         onContextMenu={event => onContextMenu?.(event, link)}
+        title={tooltip}
         className={`${shell} flex items-center gap-2.5 ${tokens.rowPadding}`}
       >
         {dragHandle}
         {selectable && <SelectBox selected={selected} />}
         <Favicon link={link} size="sm" density={density} />
+        {statusDot}
         <span className={`min-w-0 flex-1 truncate ${tokens.titleSize} font-medium text-ink`}>{link.title}</span>
         {pinRow}
         <span className="hidden min-w-0 max-w-[40%] truncate text-[11px] text-ink-muted sm:block">{hostOf(link.url)}</span>
@@ -243,11 +280,13 @@ const LinkCard: React.FC<LinkCardProps> = ({
         onClick={handleClick}
         onKeyDown={handleKey}
         onContextMenu={event => onContextMenu?.(event, link)}
+        title={tooltip}
         className={`${shell} flex items-center gap-2 ${tokens.rowPadding}`}
       >
         {dragHandle}
         {selectable && <SelectBox selected={selected} />}
         <Favicon link={link} size="sm" density={density} />
+        {statusDot}
         <span className={`min-w-0 flex-1 truncate ${tokens.titleSize} font-medium text-ink`}>{link.title}</span>
         {pinRow}
         {actions}
@@ -263,6 +302,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
       onClick={handleClick}
       onKeyDown={handleKey}
       onContextMenu={event => onContextMenu?.(event, link)}
+        title={tooltip}
       className={`${shell} flex h-full items-stretch gap-1 ${tokens.cardPadding}`}
     >
       {dragHandle}
@@ -272,7 +312,8 @@ const LinkCard: React.FC<LinkCardProps> = ({
           <div className="flex min-w-0 flex-1 flex-col self-stretch">
             <div className="flex items-center gap-1.5">
               {selectable && <SelectBox selected={selected} />}
-              <span className={`min-w-0 flex-1 truncate ${tokens.titleSize} font-semibold tracking-tight text-ink`}>{link.title}</span>
+              {statusDot}
+        <span className={`min-w-0 flex-1 truncate ${tokens.titleSize} font-semibold tracking-tight text-ink`}>{link.title}</span>
               {pinRow}
             </div>
             <p className={`mt-1.5 line-clamp-2 min-h-[2.1em] ${tokens.descSize} leading-relaxed text-ink-soft`}>

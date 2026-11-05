@@ -5,7 +5,12 @@ import {
 import { DndContext, DragEndEvent, PointerSensor, closestCenter, useSensor, useSensors, KeyboardSensor } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { AIConfig, Category, DEFAULT_CATEGORIES, INITIAL_LINKS, LinkItem, SiteSettings, CardStyle, Density } from './types';
-import { LOCAL_STORAGE_KEY, AI_CONFIG_KEY, SITE_SETTINGS_KEY, SORT_CONFIG_KEY, THEME_KEY } from './constants/storageKeys';
+import { LOCAL_STORAGE_KEY, AI_CONFIG_KEY, SITE_SETTINGS_KEY, SORT_CONFIG_KEY, THEME_KEY, CURRENT_SPACE_KEY } from './constants/storageKeys';
+import { hasBang, resolveWebSearch } from './services/webSearch';
+import { categoryIdsInSpace, normalizeSpaces } from './services/spaces';
+import { useServiceStatus } from './services/useServiceStatus';
+import MenuBarWeather from './components/MenuBarWeather';
+import SpaceSwitcher from './components/SpaceSwitcher';
 import { applyReorder, applySort, canReorder, normalizeSortConfig, type SortConfig } from './services/sorting';
 import { normalizeDensity } from './services/density';
 import { computeFillCount, useElementHeight, useGridColumns } from './services/fillScreen';
@@ -59,7 +64,16 @@ const normalizeSiteSettings = (value: Partial<SiteSettings> = {}): SiteSettings 
   wallpaper: typeof value.wallpaper === 'string' ? value.wallpaper : undefined,
   wallpaperPreset: normalizeWallpaperPreset(value.wallpaperPreset),
   wallpaperDim: normalizeWallpaperDim(value.wallpaperDim),
+  searchEngine: typeof value.searchEngine === 'string' ? value.searchEngine : undefined,
+  weather: value.weather && Number.isFinite(value.weather.latitude) && Number.isFinite(value.weather.longitude)
+    ? { name: String(value.weather.name || ''), latitude: value.weather.latitude, longitude: value.weather.longitude }
+    : null,
+  spaces: normalizeSpaces(value.spaces),
 });
+
+/** 焦点在输入控件里时，全局快捷键不应抢走按键。 */
+const isTypingTarget = (target: EventTarget | null) =>
+  target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
 const DEFAULT_AI_CONFIG: AIConfig = { provider: 'gemini', baseUrl: '', model: 'gemini-2.5-flash' };
@@ -156,6 +170,10 @@ const App: React.FC = () => {
   const [arrangeMode, setArrangeMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [currentSpaceId, setCurrentSpaceId] = useState(() => localStorage.getItem(CURRENT_SPACE_KEY) || '');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // 由书签小工具打开的收藏窗口：保存或取消后自动关闭
+  const popupModeRef = useRef(new URLSearchParams(window.location.search).get('popup') === '1');
   const [isLoading, setIsLoading] = useState(true);
 
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => readAIConfig());
@@ -164,7 +182,8 @@ const App: React.FC = () => {
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const dataVersionRef = useRef(0);
-  const syncQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  const pendingSyncRef = useRef<{ links: LinkItem[]; categories: Category[] } | null>(null);
+  const syncingRef = useRef(false);
   const syncBlockedRef = useRef(false);
   const lastRefreshRef = useRef(0);
 
@@ -214,7 +233,29 @@ const App: React.FC = () => {
     return data;
   };
 
-  const syncToCloud = (nextLinks: LinkItem[], nextCategories: Category[]): Promise<boolean> => {
+  /**
+   * 同步合并：请求在途时，后续改动只记住最新一份，等当前请求结束后一次性上传。
+   * 连续拖拽、批量置顶不会再排出一串全量上传；第一笔改动仍然立即发出，不引入延迟。
+   */
+  const syncToCloud = async (nextLinks: LinkItem[], nextCategories: Category[]): Promise<boolean> => {
+    pendingSyncRef.current = { links: nextLinks, categories: nextCategories };
+    if (syncingRef.current) return true;
+    syncingRef.current = true;
+    let ok = true;
+    try {
+      while (pendingSyncRef.current) {
+        const payload = pendingSyncRef.current;
+        pendingSyncRef.current = null;
+        ok = await pushToCloud(payload.links, payload.categories);
+        if (!ok) break;
+      }
+    } finally {
+      syncingRef.current = false;
+    }
+    return ok;
+  };
+
+  const pushToCloud = (nextLinks: LinkItem[], nextCategories: Category[]): Promise<boolean> => {
     const run = async () => {
       if (syncBlockedRef.current) return false;
       setSyncStatus('saving');
@@ -251,9 +292,7 @@ const App: React.FC = () => {
         return false;
       }
     };
-    const queued = syncQueueRef.current.then(run, run);
-    syncQueueRef.current = queued.then(() => true, () => false);
-    return queued;
+    return run();
   };
 
   const updateData = (nextLinks: LinkItem[], nextCategories: Category[]) => {
@@ -380,6 +419,22 @@ const App: React.FC = () => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setIsPaletteOpen(open => !open);
+        return;
+      }
+      if (isTypingTarget(event.target) || document.querySelector('[role="dialog"]')) return;
+      // Ctrl + ← / →：切换桌面（和 macOS 一样）
+      if (event.ctrlKey && !event.metaKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('cove:switch-space', { detail: event.key === 'ArrowRight' ? 1 : -1 }));
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // 在页面任意位置直接打字即开始搜索；「/」只聚焦不输入
+      if (event.key === '/') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (event.key.length === 1 && event.key !== ' ') {
+        searchInputRef.current?.focus();
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -487,6 +542,32 @@ const App: React.FC = () => {
     localStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
   };
 
+  const spaces = useMemo(() => normalizeSpaces(siteSettings.spaces), [siteSettings.spaces]);
+  const activeSpaceId = spaces.some(space => space.id === currentSpaceId) ? currentSpaceId : spaces[0].id;
+  const spaceCategoryIds = useMemo(() => categoryIdsInSpace(activeSpaceId, categories, spaces), [activeSpaceId, categories, spaces]);
+  const inActiveSpace = (link: LinkItem) => spaceCategoryIds.has(link.categoryId);
+  const spaceCategories = useMemo(() => categories.filter(category => spaceCategoryIds.has(category.id)), [categories, spaceCategoryIds]);
+
+  const switchSpace = (id: string) => {
+    setCurrentSpaceId(id);
+    localStorage.setItem(CURRENT_SPACE_KEY, id);
+    setSelectedCategory('pinned');
+    setArrangeMode(false);
+    setSelectedIds(new Set());
+  };
+  const switchSpaceRef = useRef(switchSpace);
+  switchSpaceRef.current = switchSpace;
+  useEffect(() => {
+    const onSwitch = (event: Event) => {
+      const step = (event as CustomEvent<number>).detail;
+      const index = spaces.findIndex(space => space.id === activeSpaceId);
+      const next = spaces[(index + step + spaces.length) % spaces.length];
+      if (next && next.id !== activeSpaceId) switchSpaceRef.current(next.id);
+    };
+    window.addEventListener('cove:switch-space', onSwitch);
+    return () => window.removeEventListener('cove:switch-space', onSwitch);
+  }, [spaces, activeSpaceId]);
+
   const isCategoryLocked = (categoryId: string): boolean => {
     const category = categories.find(item => item.id === categoryId);
     if (!category) return false;
@@ -527,6 +608,11 @@ const App: React.FC = () => {
     const newLink: LinkItem = { ...data, url, id: makeId(), createdAt: Date.now(), order: links.length };
     updateData([...links, newLink], categories);
     setIsLinkModalOpen(false);
+    if (popupModeRef.current) {
+      showToast('已收藏到 Cove', { type: 'success' });
+      // 留一点时间把同步请求发出去再关窗
+      window.setTimeout(() => window.close(), 900);
+    }
   };
 
   const handleEditLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
@@ -557,16 +643,21 @@ const App: React.FC = () => {
     const parsed = parseSearchQuery(searchQuery);
     const hasSearch = !!searchQuery.trim();
     let result = links.filter(link => !link.deletedAt && !isCategoryLocked(link.categoryId));
+    // 搜索覆盖全部桌面和分类，像启动器一样；不搜索时只看当前桌面里选中的视图
+    if (hasSearch) {
+      result = result.filter(link => matchesFilters(link, parsed, categories) && matchesQuery(link, parsed.text));
+      return sortByRelevance(result, parsed.text || searchQuery);
+    }
+    result = result.filter(inActiveSpace);
     // 置顶板块已单独渲染同一批卡片，主页主列表排除以免重复
-    if (!hasSearch && selectedCategory === 'all') result = result.filter(link => !link.pinned);
-    if (hasSearch) result = result.filter(link => matchesFilters(link, parsed, categories) && matchesQuery(link, parsed.text));
+    if (selectedCategory === 'all') result = result.filter(link => !link.pinned);
     if (selectedCategory === 'pinned') {
       result = result.filter(link => link.pinned);
     } else if (selectedCategory !== 'all') {
       const childIds = categories.filter(category => category.parentId === selectedCategory).map(category => category.id);
       result = result.filter(link => link.categoryId === selectedCategory || childIds.includes(link.categoryId));
     }
-    return hasSearch ? sortByRelevance(result, parsed.text || searchQuery) : applySort(result, sortConfig);
+    return applySort(result, sortConfig);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -626,11 +717,11 @@ const App: React.FC = () => {
     if (!searchQuery.trim() || pinyinReady) return;
     void loadPinyin().then(() => setPinyinReady(true));
   }, [searchQuery, pinyinReady]);
-  const displayedLinks = useMemo(computeDisplayed, [links, categories, selectedCategory, searchQuery, unlockedCategoryIds, sortConfig, pinyinReady]);
+  const displayedLinks = useMemo(computeDisplayed, [links, categories, selectedCategory, searchQuery, unlockedCategoryIds, sortConfig, pinyinReady, spaceCategoryIds]);
 
   const pinnedLinks = useMemo(
-    () => applySort(links.filter(link => link.pinned && !isCategoryLocked(link.categoryId)), sortConfig),
-    [links, categories, unlockedCategoryIds, sortConfig],
+    () => applySort(links.filter(link => link.pinned && !link.deletedAt && inActiveSpace(link) && !isCategoryLocked(link.categoryId)), sortConfig),
+    [links, categories, unlockedCategoryIds, sortConfig, spaceCategoryIds],
   );
 
   /**
@@ -639,7 +730,7 @@ const App: React.FC = () => {
    * 保证新用户打开也有内容，而不是空 Dock。
    */
   const dockLinks = useMemo(() => {
-    const visible = links.filter(link => !link.deletedAt && !isCategoryLocked(link.categoryId));
+    const visible = links.filter(link => !link.deletedAt && inActiveSpace(link) && !isCategoryLocked(link.categoryId));
     return [...visible].sort((a, b) => {
       const byVisit = (b.visitCount || 0) - (a.visitCount || 0);
       if (byVisit !== 0) return byVisit;
@@ -649,7 +740,7 @@ const App: React.FC = () => {
       if (byPin !== 0) return byPin;
       return b.createdAt - a.createdAt;
     });
-  }, [links, categories, unlockedCategoryIds]);
+  }, [links, categories, unlockedCategoryIds, spaceCategoryIds]);
 
   /** 侧栏计数：父分类含其子分类的书签。 */
   const categoryCounts = useMemo(() => {
@@ -663,7 +754,25 @@ const App: React.FC = () => {
     }
     return counts;
   }, [links, categories, unlockedCategoryIds]);
-  const visibleTotal = useMemo(() => links.filter(link => !link.deletedAt && !isCategoryLocked(link.categoryId)).length, [links, categories, unlockedCategoryIds]);
+  const visibleTotal = useMemo(() => links.filter(link => !link.deletedAt && inActiveSpace(link) && !isCategoryLocked(link.categoryId)).length, [links, categories, unlockedCategoryIds, spaceCategoryIds]);
+  const statusMap = useServiceStatus(links, !!authToken);
+
+  /** 搜索框回车：有匹配书签打开第一个；没有匹配、带 !前缀 或按住 Shift 时走网页搜索。 */
+  const webSearch = searchQuery.trim() ? resolveWebSearch(searchQuery, siteSettings.searchEngine) : null;
+  const openWebSearch = () => {
+    if (webSearch) window.open(webSearch.url, '_blank', 'noopener,noreferrer');
+  };
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setSearchQuery('');
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key !== 'Enter' || !searchQuery.trim()) return;
+    event.preventDefault();
+    if (event.shiftKey || hasBang(searchQuery) || displayedLinks.length === 0) openWebSearch();
+    else openLink(displayedLinks[0]);
+  };
 
   useEffect(() => { localStorage.setItem(SORT_CONFIG_KEY, JSON.stringify(sortConfig)); }, [sortConfig]);
 
@@ -815,8 +924,11 @@ const App: React.FC = () => {
         </button>
       ))}
 
-      {/* 右侧：时钟 + 主题切换，用细竖线分隔 */}
+      <SpaceSwitcher spaces={spaces} currentId={activeSpaceId} onSwitch={switchSpace} />
+
+      {/* 右侧：天气 + 时钟 + 主题切换，用细竖线分隔 */}
       <span className="ml-auto flex items-center gap-2.5">
+        {authToken && <MenuBarWeather location={siteSettings.weather} />}
         <MenuBarClock />
         <span className="h-3 w-px bg-line" />
         <button
@@ -831,8 +943,8 @@ const App: React.FC = () => {
     </div>
     <div className="mac-desktop-body">
     <Sidebar
-      navTitle={siteSettings.navTitle}
-      categories={categories}
+      navTitle={spaces.length > 1 ? spaces.find(space => space.id === activeSpaceId)?.name || siteSettings.navTitle : siteSettings.navTitle}
+      categories={spaceCategories}
       selectedCategory={selectedCategory}
       counts={categoryCounts}
       totalCount={visibleTotal}
@@ -847,10 +959,10 @@ const App: React.FC = () => {
       onOpenSettings={() => openExclusive('settings')}
     />
       <CategoryAuthModal isOpen={!!lockedCategory} category={lockedCategory} onClose={() => setLockedCategory(null)} onUnlock={id => { setUnlockedCategoryIds(current => new Set(current).add(id)); setSelectedCategory(id); setLockedCategory(null); }} />
-      <CategoryManagerModal isOpen={isCategoryManagerOpen} onClose={() => { setIsCategoryManagerOpen(false); setCategoryManagerEditId(''); }} categories={categories} onUpdateCategories={handleUpdateCategories} onDeleteCategory={handleDeleteCategory} initialEditId={categoryManagerEditId} />
+      <CategoryManagerModal isOpen={isCategoryManagerOpen} onClose={() => { setIsCategoryManagerOpen(false); setCategoryManagerEditId(''); }} categories={categories} onUpdateCategories={handleUpdateCategories} onDeleteCategory={handleDeleteCategory} initialEditId={categoryManagerEditId} spaces={spaces} currentSpaceId={activeSpaceId} />
       {/* 懒加载弹窗只在打开时挂载，各自一个 Suspense：首屏不必等这些 chunk，加载时也不会让整个桌面消失 */}
       {isImportOpen && <ModalErrorBoundary onClose={() => setIsImportOpen(false)}><Suspense fallback={null}><ImportModal isOpen onClose={() => setIsImportOpen(false)} existingLinks={links} categories={categories} onImport={handleImportConfirm} /></Suspense></ModalErrorBoundary>}
-      {isSettingsOpen && <Suspense fallback={null}><SettingsModal isOpen onClose={() => { setIsSettingsOpen(false); setSettingsInitialTab(undefined); setAiSettingsCategoryId(''); setAiSettingsAction(''); }} config={aiConfig} siteSettings={siteSettings} onSave={handleSaveAIConfig} links={links} categories={categories} onUpdateLinks={next => updateData(next, categories)} onUpdateCategories={next => updateData(links, next)} onUpdateData={updateData} onEditLink={link => { setIsSettingsOpen(false); setEditingLink(link); setIsLinkModalOpen(true); }} onExportJson={() => saveExport('json')} lastBackup={lastBackup} onOpenImport={() => { setIsSettingsOpen(false); setSettingsInitialTab('backup'); setIsImportOpen(true); }} onRestoreBackup={authToken ? () => void restoreFromBackup() : undefined} initialAICategoryId={aiSettingsCategoryId} initialAIAction={aiSettingsAction || undefined} initialTab={settingsInitialTab} /></Suspense>}
+      {isSettingsOpen && <Suspense fallback={null}><SettingsModal isOpen onClose={() => { setIsSettingsOpen(false); setSettingsInitialTab(undefined); setAiSettingsCategoryId(''); setAiSettingsAction(''); }} config={aiConfig} siteSettings={siteSettings} onSave={handleSaveAIConfig} links={links} categories={categories} onUpdateLinks={next => updateData(next, categories)} onUpdateCategories={next => updateData(links, next)} onUpdateData={updateData} onEditLink={link => { setIsSettingsOpen(false); setEditingLink(link); setIsLinkModalOpen(true); }} onExportJson={() => saveExport('json')} lastBackup={lastBackup} onOpenImport={() => { setIsSettingsOpen(false); setSettingsInitialTab('backup'); setIsImportOpen(true); }} onRestoreBackup={authToken ? () => void restoreFromBackup() : undefined} onShowTag={tag => { setIsSettingsOpen(false); setSearchQuery(`tag:${tag}`); }} initialAICategoryId={aiSettingsCategoryId} initialAIAction={aiSettingsAction || undefined} initialTab={settingsInitialTab} /></Suspense>}
       <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} links={links} categories={categories} actions={actions} onOpenLink={link => { recordVisit(link.id); window.open(link.url, '_blank', 'noopener,noreferrer'); }} onSelectCategory={id => { setSelectedCategory(id); setIsPaletteOpen(false); }} />
       {syncConflict && <Suspense fallback={null}><SyncConflictModal isOpen onClose={() => { syncBlockedRef.current = false; setSyncConflict(null); setSyncStatus('idle'); }} onUseLocal={() => { if (syncConflict) { syncBlockedRef.current = false; void syncToCloud(syncConflict.local.links, syncConflict.local.categories); setSyncConflict(null); } }} onUseCloud={() => { if (syncConflict) { syncBlockedRef.current = false; applyCloudData(syncConflict.cloud); setSyncConflict(null); setSyncStatus('idle'); } }} onMerge={() => { if (!syncConflict) return; const linkMap = new Map([...syncConflict.cloud.links, ...syncConflict.local.links].map(link => [link.id, link])); const catMap = new Map([...syncConflict.cloud.categories, ...syncConflict.local.categories].map(category => [category.id, category])); syncBlockedRef.current = false; dataVersionRef.current = syncConflict.cloud.version; updateData([...linkMap.values()], [...catMap.values()]); setSyncConflict(null); }} /></Suspense>}
       <main className="material-content flex min-w-0 flex-1 flex-col">
@@ -859,11 +971,21 @@ const App: React.FC = () => {
           <div className="relative w-full max-w-md">
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted" />
             <input
+              ref={searchInputRef}
               value={searchQuery}
               onChange={event => setSearchQuery(event.target.value)}
-              placeholder="搜索书签…"
+              onKeyDown={handleSearchKeyDown}
+              placeholder="搜索书签，或输入关键词回车搜网页…"
+              aria-label="搜索书签或网页"
               className="material-sunken w-full rounded-[8px] py-1.5 pl-8 pr-3 text-[13px] text-ink outline-none transition-shadow placeholder:text-ink-muted focus:shadow-[inset_0_0_0_2px_hsl(var(--accent)/0.55)]"
             />
+            {webSearch && (
+              <p className="absolute left-0 top-full z-20 mt-1 truncate text-[11px] text-ink-muted">
+                {displayedLinks.length && !hasBang(searchQuery)
+                  ? <>↵ 打开「{displayedLinks[0].title}」 · ⇧↵ {webSearch.label}</>
+                  : <>↵ {webSearch.label}</>}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -900,6 +1022,7 @@ const App: React.FC = () => {
                     selectable={arrangeMode}
                     selectedIds={selectedIds}
                     draggable={canReorder(sortConfig)}
+                    statusMap={statusMap}
                     {...cardHandlers}
                   />
                 </SortableContext>
@@ -937,6 +1060,7 @@ const App: React.FC = () => {
                       selectable={arrangeMode}
                       selectedIds={selectedIds}
                       draggable={canReorder(sortConfig) && !arrangeMode}
+                      statusMap={statusMap}
                       {...cardHandlers}
                     />
                   </SortableContext>
@@ -944,7 +1068,14 @@ const App: React.FC = () => {
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center dark:border-slate-700">
                 {searchQuery ? (
-                  <p className="text-[13px] text-slate-400">没有匹配的书签</p>
+                  <>
+                    <p className="text-[13px] text-ink-muted">没有匹配的书签</p>
+                    {webSearch && (
+                      <button type="button" onClick={openWebSearch} className="mt-2 text-[12px] text-accent hover:underline">
+                        {webSearch.label}「{searchQuery.trim()}」 →
+                      </button>
+                    )}
+                  </>
                 ) : selectedCategory === 'pinned' ? (
                   <>
                     <p className="text-[13px] text-slate-400">还没有置顶书签</p>
@@ -990,7 +1121,7 @@ const App: React.FC = () => {
         onDelete={batchDelete}
         onClear={clearSelection}
       />
-      {isLinkModalOpen && <Suspense fallback={null}><LinkModal isOpen onClose={() => { setIsLinkModalOpen(false); setEditingLink(undefined); setPrefillLink(undefined); }} onSave={editingLink ? handleEditLink : handleAddLink} onDelete={editingLink ? handleDeleteLink : undefined} categories={categories} links={links} initialData={editingLink || (prefillLink as LinkItem)} aiConfig={aiConfig} defaultCategoryId={selectedCategory !== 'all' ? selectedCategory : undefined} /></Suspense>}
+      {isLinkModalOpen && <Suspense fallback={null}><LinkModal isOpen onClose={() => { setIsLinkModalOpen(false); setEditingLink(undefined); setPrefillLink(undefined); if (popupModeRef.current && !editingLink) window.close(); }} onSave={editingLink ? handleEditLink : handleAddLink} onDelete={editingLink ? handleDeleteLink : undefined} categories={categories} links={links} initialData={editingLink} prefill={editingLink ? undefined : prefillLink} aiConfig={aiConfig} defaultCategoryId={categories.some(category => category.id === selectedCategory) ? selectedCategory : spaceCategories[0]?.id} /></Suspense>}
       <ContextMenu isOpen={contextMenu.isOpen} position={contextMenu.position} targetType={contextMenu.type} isCategoryEditable={contextMenu.category?.id !== 'common'} onClose={closeContextMenu} onCopyLink={copyLinkToClipboard} onShowQRCode={showQRCode} onEditLink={editLinkFromContextMenu} onDeleteLink={deleteLinkFromContextMenu} onTogglePin={togglePinFromContextMenu} onOpenCategory={openCategoryFromContextMenu} onEditCategory={editCategoryFromContextMenu} onRenameCategory={renameCategoryFromContextMenu} onStructureCategory={structureCategoryFromContextMenu} onDeleteCategory={deleteCategoryFromContextMenu} />
       {qrCode.isOpen && <Suspense fallback={null}><QRCodeModal isOpen url={qrCode.url} title={qrCode.title} onClose={() => setQrCode({ isOpen: false, url: '', title: '' })} /></Suspense>}
     </DndContext>}

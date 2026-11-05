@@ -13,12 +13,15 @@ interface LinkModalProps {
   onDelete?: (id: string) => void;
   categories: Category[];
   links?: LinkItem[];
+  /** 编辑已有书签时传入；新增时不传。 */
   initialData?: LinkItem;
+  /** 新增时的预填内容（PWA 分享、书签小工具），不会让弹窗进入编辑态。 */
+  prefill?: Partial<LinkItem>;
   aiConfig: AIConfig;
   defaultCategoryId?: string;
 }
 
-const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, links = [], initialData, aiConfig, defaultCategoryId }) => {
+const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, links = [], initialData, prefill, aiConfig, defaultCategoryId }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   useModalA11y(isOpen, onClose, modalRef);
   const [title, setTitle] = useState('');
@@ -33,6 +36,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   const [batchMode, setBatchMode] = useState(false);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
+  const [note, setNote] = useState('');
+  const [monitor, setMonitor] = useState(false);
 
   const duplicateHits = useMemo(
     () => (url.trim() ? findDuplicatesOfUrl(url, links, initialData?.id) : []),
@@ -67,18 +72,23 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         setPinned(initialData.pinned || false);
         setIcon(initialData.icon || '');
         setTagsInput(initialData.tags?.join(', ') || '');
+        setNote(initialData.note || '');
+        setMonitor(!!initialData.monitor);
       } else {
-        setTitle('');
-        setUrl('');
+        setTitle(prefill?.title || '');
+        setUrl(prefill?.url || '');
         setDescription('');
-        // 如果有默认分类ID且该分类存在，则使用默认分类，否则使用第一个分类
-        const defaultCategory = defaultCategoryId && categories.find(cat => cat.id === defaultCategoryId);
-        setCategoryId(defaultCategory ? defaultCategoryId : (categories[0]?.id || 'common'));
+        // 预填分类 > 当前所在分类 > 第一个分类
+        const preferred = [prefill?.categoryId, defaultCategoryId].find(id => id && categories.some(cat => cat.id === id));
+        setCategoryId(preferred || categories[0]?.id || 'common');
         setPinned(false);
         setIcon('');
+        setTagsInput('');
+        setNote('');
+        setMonitor(false);
       }
     }
-  }, [isOpen, initialData, categories, defaultCategoryId]);
+  }, [isOpen, initialData, prefill, categories, defaultCategoryId]);
 
   // 当URL变化时:自动获取图标 +(标题为空时)自动抓取网页标题
   useEffect(() => {
@@ -145,7 +155,9 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       description,
       categoryId,
       pinned,
-      tags
+      tags,
+      note: note.trim() || undefined,
+      monitor: monitor || undefined,
     });
 
 
@@ -158,6 +170,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       setIcon('');
       setDescription('');
       setTagsInput('');
+      setNote('');
+      setMonitor(false);
       setPinned(false);
       // 如果开启自动获取图标，尝试获取新图标
       if (autoFetchIcon && finalUrl) {
@@ -379,6 +393,16 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
           </div>
 
           <div>
+            <label className="block text-sm font-medium mb-1 dark:text-slate-300">备注 (选填)</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all h-16 resize-y"
+              placeholder="用途、登录方式、待办……可被搜索，悬停卡片时显示"
+            />
+          </div>
+
+          <div>
             <label className="block text-sm font-medium mb-1 dark:text-slate-300">标签 (逗号分隔)</label>
             <input
               type="text"
@@ -401,6 +425,19 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             ))}
             </select>
           </div>
+
+          <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={monitor}
+              onChange={(e) => setMonitor(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+            />
+            <span>
+              在卡片上显示在线状态
+              <span className="block text-xs text-slate-400">适合自建服务：每分钟从 Cloudflare 边缘探测一次，内网地址无法探测</span>
+            </span>
+          </label>
 
           <div className="pt-2 relative">
             {/* 成功提示 */}

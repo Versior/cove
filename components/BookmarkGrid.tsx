@@ -3,7 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { CardStyle, Density, LinkItem } from '../types';
 import { gridClassFor } from '../services/density';
-import LinkCard from './LinkCard';
+import LinkCard, { type CardServiceStatus } from './LinkCard';
 interface SortableCardProps {
   link: LinkItem;
   cardStyle: CardStyle;
@@ -13,7 +13,6 @@ interface SortableCardProps {
   selectable?: boolean;
   selected?: boolean;
   /** 显示拖拽把手（仅手动排序且非整理模式）。 */
-  /** 显示拖拽把手（仅手动排序且非整理模式）。 */
   draggable?: boolean;
   /** dnd-kit 的 activator ref，挂到把手上。 */
   activatorRef?: (node: HTMLElement | null) => void;
@@ -21,6 +20,7 @@ interface SortableCardProps {
   onEdit: (link: LinkItem) => void;
   onToggleSelect?: (id: string) => void;
   onContextMenu?: (event: React.MouseEvent, link: LinkItem) => void;
+  serviceStatus?: CardServiceStatus;
 }
 
 /**
@@ -58,7 +58,9 @@ const SortableCard: React.FC<SortableCardProps> = props => {
   );
 };
 
-interface BookmarkGridProps extends Omit<SortableCardProps, 'link' | 'selected'> {
+interface BookmarkGridProps extends Omit<SortableCardProps, 'link' | 'selected' | 'serviceStatus'> {
+  /** 开启在线状态监测的书签 → 最近一次结果；还没结果的显示为检测中。 */
+  statusMap?: Record<string, CardServiceStatus>;
   links: LinkItem[];
   /** 整理模式下按 id 判断选中，避免逐卡传布尔值。 */
   selectedIds?: Set<string>;
@@ -67,7 +69,7 @@ interface BookmarkGridProps extends Omit<SortableCardProps, 'link' | 'selected'>
 }
 
 /** 网格容器：列数与间距由密度决定，列表模式降为单列。 */
-const BookmarkGrid: React.FC<BookmarkGridProps> = ({ links, cardStyle, selectedIds, density = 'cozy', ...rest }) => {
+const BookmarkGrid: React.FC<BookmarkGridProps> = ({ links, cardStyle, selectedIds, density = 'cozy', statusMap, ...rest }) => {
   const gridClass = gridClassFor(density, cardStyle);
 
   return (
@@ -79,6 +81,7 @@ const BookmarkGrid: React.FC<BookmarkGridProps> = ({ links, cardStyle, selectedI
           cardStyle={cardStyle}
           density={density}
           selected={selectedIds?.has(link.id) ?? false}
+          serviceStatus={link.monitor ? statusMap?.[link.id] ?? 'checking' : undefined}
           {...rest}
         />
       ))}

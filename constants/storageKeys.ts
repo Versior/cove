@@ -3,6 +3,8 @@ export const LOCAL_STORAGE_KEY = 'cove_data_cache';
 export const AI_CONFIG_KEY = 'cove_ai_config';
 export const SITE_SETTINGS_KEY = 'cove_site_settings';
 export const SORT_CONFIG_KEY = 'cove_sort_config';
+/** 当前所在桌面，按设备记忆，不同步到云端。 */
+export const CURRENT_SPACE_KEY = 'cove_current_space';
 export const THEME_KEY = 'theme';
 
 /**

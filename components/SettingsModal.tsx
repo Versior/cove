@@ -1,13 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, Cloud, CopyCheck, LayoutTemplate, Save, X } from 'lucide-react';
+import { BookmarkPlus, Bot, Cloud, CopyCheck, LayoutTemplate, Save, X } from 'lucide-react';
 import { AIConfig, Category, LinkItem, SiteSettings } from '../types';
 import { useModalA11y } from './useModalA11y';
 import BackupSettingsTab from './BackupSettingsTab';
 import SiteSettingsTab from './SiteSettingsTab';
 import AISettingsTab from './AISettingsTab';
 import DuplicateLinksPanel from './DuplicateLinksPanel';
+import LinkCheckPanel from './LinkCheckPanel';
+import TagManagerPanel from './TagManagerPanel';
+import BookmarkletPanel from './BookmarkletPanel';
 
-export type SettingsTab = 'site' | 'ai' | 'duplicates' | 'backup';
+export type SettingsTab = 'site' | 'ai' | 'organize' | 'backup' | 'capture';
+type OrganizeView = 'duplicates' | 'broken' | 'tags';
+
+const ORGANIZE_VIEWS: Array<{ id: OrganizeView; label: string }> = [
+  { id: 'duplicates', label: '重复网址' },
+  { id: 'broken', label: '失效链接' },
+  { id: 'tags', label: '标签' },
+];
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -25,6 +35,8 @@ interface SettingsModalProps {
   onOpenImport: () => void;
   /** 未登录时不传，备份页隐藏「从云端恢复」。 */
   onRestoreBackup?: () => void;
+  /** 标签管理里点「查看」：关闭设置并按标签筛选。 */
+  onShowTag?: (tag: string) => void;
   lastBackup?: { status: string; at: number } | null;
   initialAICategoryId?: string;
   initialAIAction?: 'rename' | 'structure';
@@ -46,6 +58,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   onExportJson,
   onOpenImport,
   onRestoreBackup,
+  onShowTag,
   lastBackup,
   initialAICategoryId,
   initialAIAction,
@@ -54,6 +67,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   useModalA11y(isOpen, onClose, modalRef);
   const [activeTab, setActiveTab] = useState<SettingsTab>('site');
+  const [organizeView, setOrganizeView] = useState<OrganizeView>('duplicates');
   const [localConfig, setLocalConfig] = useState(config);
   const [localSiteSettings, setLocalSiteSettings] = useState(siteSettings);
 
@@ -69,7 +83,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setLocalConfig(current => ({ ...current, [key]: value }));
   };
 
-  const handleSiteChange = (key: keyof SiteSettings, value: string | number) => {
+  const handleSiteChange = (key: keyof SiteSettings, value: SiteSettings[keyof SiteSettings]) => {
     setLocalSiteSettings(current => ({ ...current, [key]: value }));
   };
 
@@ -79,7 +93,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'site', label: '网站设置', icon: LayoutTemplate },
     { id: 'backup', label: '备份与恢复', icon: Cloud },
     { id: 'ai', label: 'AI 设置', icon: Bot },
-    { id: 'duplicates', label: '重复检测', icon: CopyCheck },
+    { id: 'organize', label: '书签整理', icon: CopyCheck },
+    { id: 'capture', label: '快捷收藏', icon: BookmarkPlus },
   ];
 
   return (
@@ -123,7 +138,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === 'site' && <SiteSettingsTab value={localSiteSettings} onChange={handleSiteChange} />}
             {activeTab === 'backup' && <BackupSettingsTab links={links} onUpdateLinks={onUpdateLinks} onExportJson={onExportJson} onOpenImport={onOpenImport} onRestoreBackup={onRestoreBackup} lastBackup={lastBackup} />}
             {activeTab === 'ai' && <AISettingsTab config={localConfig} onChange={handleChange} links={links} categories={categories} onUpdateLinks={onUpdateLinks} onUpdateCategories={onUpdateCategories} onUpdateData={onUpdateData} initialCategoryId={initialAICategoryId} initialAIAction={initialAIAction} />}
-            {activeTab === 'duplicates' && <DuplicateLinksPanel links={links} categories={categories} onUpdateLinks={onUpdateLinks} onEditLink={onEditLink} />}
+            {activeTab === 'organize' && (
+              <div className="space-y-4">
+                <div className="inline-flex rounded-lg bg-sunken p-0.5" role="tablist">
+                  {ORGANIZE_VIEWS.map(view => (
+                    <button
+                      key={view.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={organizeView === view.id}
+                      onClick={() => setOrganizeView(view.id)}
+                      className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${organizeView === view.id ? 'bg-raised text-ink shadow-sm' : 'text-ink-soft hover:text-ink'}`}
+                    >
+                      {view.label}
+                    </button>
+                  ))}
+                </div>
+                {organizeView === 'duplicates' && <DuplicateLinksPanel links={links} categories={categories} onUpdateLinks={onUpdateLinks} onEditLink={onEditLink} />}
+                {organizeView === 'broken' && <LinkCheckPanel links={links} categories={categories} onUpdateLinks={onUpdateLinks} onEditLink={onEditLink} />}
+                {organizeView === 'tags' && <TagManagerPanel links={links} onUpdateLinks={onUpdateLinks} onShowTag={onShowTag} />}
+              </div>
+            )}
+            {activeTab === 'capture' && <BookmarkletPanel />}
           </div>
           <div className="flex shrink-0 justify-end gap-2 px-5 py-3" style={{ boxShadow: 'inset 0 0.5px 0 hsl(var(--line) / 0.8)' }}>
             <button

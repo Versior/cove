@@ -14,7 +14,10 @@ export interface LinkItem {
   order?: number;
   visitCount?: number;
   lastVisitedAt?: number;
+  /** 备注：可编辑，参与搜索，悬停卡片时显示。 */
   note?: string;
+  /** 在卡片上显示在线状态（适合自建服务）。 */
+  monitor?: boolean;
 }
 
 export interface Category {
@@ -24,6 +27,21 @@ export interface Category {
   /** 分类显示锁的密码哈希（见 services/categoryLock.ts），不存明文。 */
   passwordHash?: string;
   parentId?: string;
+  /** 所在桌面；只对顶层分类生效，子分类跟随父分类。缺省归第一个桌面。 */
+  spaceId?: string;
+}
+
+/** 一个桌面（类似 macOS 的 Spaces），见 services/spaces.ts。 */
+export interface Space {
+  id: string;
+  name: string;
+}
+
+/** 菜单栏天气的位置。 */
+export interface WeatherLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
 }
 
 export type CardStyle = SiteSettings['cardStyle'];
@@ -45,6 +63,12 @@ export interface SiteSettings {
   wallpaperPreset?: WallpaperPreset;
   /** 壁纸暗化程度 0-100，越大字越清晰。 */
   wallpaperDim?: number;
+  /** 搜索框直达网页搜索时用的默认引擎 id，见 services/webSearch.ts。 */
+  searchEngine?: string;
+  /** 菜单栏天气位置；为空时不显示天气。 */
+  weather?: WeatherLocation | null;
+  /** 桌面列表；只有一个时不显示切换器。 */
+  spaces?: Space[];
 }
 
 export type AIProvider = 'gemini' | 'openai';

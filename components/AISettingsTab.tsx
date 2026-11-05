@@ -185,7 +185,10 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
   const applyCategories = () => {
     const changes = new Map(categoryPreview.filter(item => selectedIds.has(item.id) && item.to && item.to !== item.from).map(item => [item.id, item.to!]));
     if (!changes.size) return;
-    onUpdateLinks(links.map(link => changes.has(link.id) ? { ...link, categoryId: changes.get(link.id), updatedAt: Date.now() } : link));
+    onUpdateLinks(links.map(link => {
+      const categoryId = changes.get(link.id);
+      return categoryId ? { ...link, categoryId, updatedAt: Date.now() } : link;
+    }));
     setCategoryPreview([]);
     setSelectedIds(new Set());
   };

@@ -3,6 +3,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { LayoutGrid, Lock, Plus, Pin, Settings, X } from 'lucide-react';
 import type { Category, Density } from '../types';
 import { DENSITY_TOKENS } from '../services/density';
+import Icon from './Icon';
 
 interface SidebarProps {
   navTitle: string;
@@ -77,12 +78,14 @@ const DroppableCategory: React.FC<{
   label: string;
   active: boolean;
   depth: number;
+  /** 分类图标；默认的 Folder 显示为蓝色文件夹，其余显示在圆角图标底座上。 */
+  icon?: string;
   locked?: boolean;
   countText: string;
   density: Density;
   onClick: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-}> = ({ id, label, active, depth, locked, countText, density, onClick, onContextMenu }) => {
+}> = ({ id, label, active, depth, icon, locked, countText, density, onClick, onContextMenu }) => {
   const tokens = DENSITY_TOKENS[density];
   const { setNodeRef, isOver } = useDroppable({ id: `cat:${id}` });
   return (
@@ -99,8 +102,17 @@ const DroppableCategory: React.FC<{
       style={depth ? { paddingLeft: 10 + depth * 14 } : undefined}
       title={`双击打开「${label}」`}
     >
-      {/* 文件夹图标：macOS 蓝色文件夹，比线性图标更有"文件夹"的感觉 */}
-      <FolderGlyph active={active || isOver} size={tokens.navIconSize + 5} locked={!!locked} />
+      {/* 默认是 macOS 蓝色文件夹；用户在分类管理里选了别的图标时，用和「全部」「置顶」同款的图标底座 */}
+      {icon && icon !== 'Folder' ? (
+        <span className="relative shrink-0">
+          <GlyphTile active={active || isOver} size={tokens.navIconSize + 5}>
+            <Icon name={icon} size={Math.round((tokens.navIconSize + 5) * 0.58)} className="text-white" />
+          </GlyphTile>
+          {locked ? <Lock size={9} className="absolute -bottom-0.5 -right-0.5 text-warn" /> : null}
+        </span>
+      ) : (
+        <FolderGlyph active={active || isOver} size={tokens.navIconSize + 5} locked={!!locked} />
+      )}
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
       {locked && <Lock size={11} className="shrink-0 text-warn" />}
       <span className="ml-auto text-[11px] font-normal tabular-nums text-ink-muted">{countText}</span>
@@ -127,6 +139,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         label={category.name}
         active={selectedCategory === category.id}
         depth={depth}
+        icon={category.icon}
         locked={!!category.passwordHash}
         countText={counts[category.id] ? String(counts[category.id]) : ''}
         density={density}

@@ -238,3 +238,60 @@ test('category lock stores only a salted hash and drops legacy plaintext passwor
   const server = normalizeData({ categories: [{ id: 'old', name: '旧分类', password: 'plain' }], links: [] });
   assert.equal('password' in server.categories[1], false);
 });
+
+test('web search resolves bangs, direct urls and the default engine', async () => {
+  const { resolveWebSearch, asDirectUrl } = await import('../services/webSearch.ts');
+  assert.equal(resolveWebSearch('!gh react hooks')?.url, 'https://github.com/search?q=react%20hooks');
+  assert.equal(resolveWebSearch('!bd 天气')?.url, 'https://www.baidu.com/s?wd=%E5%A4%A9%E6%B0%94');
+  assert.equal(resolveWebSearch('!unknown thing', 'bing')?.url, 'https://www.bing.com/search?q=!unknown%20thing');
+  assert.equal(resolveWebSearch('github.com/vercel')?.url, 'https://github.com/vercel');
+  assert.equal(resolveWebSearch('cloudflare pages', 'baidu')?.url, 'https://www.baidu.com/s?wd=cloudflare%20pages');
+  assert.equal(asDirectUrl('hello world'), null);
+  assert.equal(asDirectUrl('react'), null);
+  assert.equal(resolveWebSearch('   '), null);
+});
+
+test('link checks treat auth and server errors as uncertain, services as up or down', async () => {
+  const { classifyLink, classifyService } = await import('../services/linkStatus.ts');
+  const r = (status: number, error?: 'network' | 'timeout' | 'blocked') => ({ url: 'https://x.test', status, error, ms: 1 });
+  assert.equal(classifyLink(r(200)), 'ok');
+  assert.equal(classifyLink(r(404)), 'broken');
+  assert.equal(classifyLink(r(0, 'network')), 'broken');
+  assert.equal(classifyLink(r(403)), 'uncertain');
+  assert.equal(classifyLink(r(0, 'timeout')), 'uncertain');
+  assert.equal(classifyLink(r(0, 'blocked')), 'skipped');
+  assert.equal(classifyService(r(401)), 'up');
+  assert.equal(classifyService(r(502)), 'down');
+  assert.equal(classifyService(r(0, 'timeout')), 'down');
+  assert.equal(classifyService(r(0, 'blocked')), 'unknown');
+});
+
+test('tag rename merges into an existing tag without duplicates', async () => {
+  const { collectTags, renameTag, deleteTag } = await import('../services/tags.ts');
+  const links = [
+    { id: '1', title: 'A', url: 'https://a.test', categoryId: 'common', createdAt: 1, tags: ['js', 'JavaScript'] },
+    { id: '2', title: 'B', url: 'https://b.test', categoryId: 'common', createdAt: 1, tags: ['js'] },
+    { id: '3', title: 'C', url: 'https://c.test', categoryId: 'common', createdAt: 1 },
+  ];
+  assert.deepEqual(collectTags(links), [{ tag: 'js', count: 2 }, { tag: 'JavaScript', count: 1 }]);
+  const merged = renameTag(links, 'js', 'JavaScript');
+  assert.deepEqual(merged.map(link => link.tags), [['JavaScript'], ['JavaScript'], undefined]);
+  assert.equal(merged[2], links[2], 'untouched links keep their identity');
+  assert.deepEqual(deleteTag(merged, 'JavaScript').map(link => link.tags), [[], [], undefined]);
+});
+
+test('spaces: children follow their top-level parent and unknown spaces fall back to the first', async () => {
+  const { normalizeSpaces, spaceOfCategory, categoryIdsInSpace } = await import('../services/spaces.ts');
+  const spaces = normalizeSpaces([{ id: 'main', name: '桌面 1' }, { id: 'work', name: '工作' }, { id: 'work', name: '重复' }]);
+  assert.deepEqual(spaces.map(space => space.id), ['main', 'work']);
+  assert.deepEqual(normalizeSpaces(null).map(space => space.id), ['main']);
+  const categories = [
+    { id: 'common', name: '常用推荐', icon: 'Star' },
+    { id: 'dev', name: '开发', icon: 'Code', spaceId: 'work' },
+    { id: 'dev-fe', name: '前端', icon: 'Folder', parentId: 'dev' },
+    { id: 'old', name: '旧', icon: 'Folder', spaceId: 'deleted-space' },
+  ];
+  assert.equal(spaceOfCategory('dev-fe', categories, spaces), 'work');
+  assert.equal(spaceOfCategory('old', categories, spaces), 'main');
+  assert.deepEqual([...categoryIdsInSpace('work', categories, spaces)].sort(), ['dev', 'dev-fe']);
+});

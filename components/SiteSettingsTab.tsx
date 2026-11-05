@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Globe, RefreshCw } from 'lucide-react';
-import { SiteSettings } from '../types';
+import { CloudSun, Globe, Layers, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { SiteSettings, WeatherLocation } from '../types';
+import { DEFAULT_ENGINE_ID, SEARCH_ENGINES, BANGS } from '../services/webSearch';
+import { DEFAULT_SPACE, makeSpaceId } from '../services/spaces';
 import { WALLPAPER_OPTIONS } from '../services/wallpaper';
 import { initialOf } from '../services/iconPalette';
 
@@ -20,6 +22,56 @@ const generateSvgIcon = (text: string, [color1, color2]: [string, string]) => {
  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="${gradientId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${color1}"/><stop offset="100%" stop-color="${color2}"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#${gradientId})" rx="16"/><text x="50%" y="50%" dy=".35em" fill="white" font-family="-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-weight="bold" font-size="32" text-anchor="middle">${char}</text></svg>`;
  return `data:image/svg+xml;base64,${window.btoa(unescape(encodeURIComponent(svg)))}`;
 };
+const sectionTitle = 'mb-2 flex items-center gap-1.5 text-sm font-medium text-ink';
+const fieldClass = 'rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-accent';
+
+/** 天气城市：输入城市名 → 选候选 → 写入设置；清空即关闭菜单栏天气。 */
+const WeatherPicker: React.FC<{ value?: WeatherLocation | null; onChange: (value: WeatherLocation | null) => void }> = ({ value, onChange }) => {
+ const [query, setQuery] = useState('');
+ const [results, setResults] = useState<Array<WeatherLocation & { region: string }>>([]);
+ const [status, setStatus] = useState('');
+
+ const search = async () => {
+ if (!query.trim()) return;
+ setStatus('搜索中…');
+ try {
+ const response = await fetch(`/api/weather?city=${encodeURIComponent(query.trim())}`);
+ const data = await response.json() as { results?: Array<WeatherLocation & { region: string }>; error?: string };
+ if (!response.ok) throw new Error(data.error || '搜索失败');
+ setResults(data.results || []);
+ setStatus(data.results?.length ? '' : '没有找到这个城市');
+ } catch (error) {
+ setStatus(error instanceof Error ? error.message : '搜索失败');
+ }
+ };
+
+ return (
+ <div>
+ <label className={sectionTitle}><CloudSun size={15} />菜单栏天气</label>
+ <div className="flex items-center gap-2 text-xs text-ink-soft">
+ {value ? <span>当前：<span className="font-medium text-ink">{value.name}</span></span> : <span>未开启</span>}
+ {value && <button type="button" onClick={() => onChange(null)} className="text-danger hover:underline">关闭天气</button>}
+ </div>
+ <div className="mt-2 flex gap-2">
+ <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void search(); } }} placeholder="输入城市，如 杭州 / Tokyo" className={`${fieldClass} flex-1`} />
+ <button type="button" onClick={() => void search()} className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-raised px-3 text-xs font-medium text-ink-soft hover:text-ink"><Search size={13} />搜索</button>
+ </div>
+ {status && <p className="mt-1 text-xs text-ink-muted">{status}</p>}
+ {results.length > 0 && (
+ <div className="mt-2 divide-y divide-line overflow-hidden rounded-lg border border-line bg-raised">
+ {results.map(item => (
+ <button key={`${item.latitude},${item.longitude}`} type="button" onClick={() => { onChange({ name: item.name, latitude: item.latitude, longitude: item.longitude }); setResults([]); setQuery(''); }} className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-sunken">
+ <span className="text-ink">{item.name}</span>
+ <span className="text-xs text-ink-muted">{item.region}</span>
+ </button>
+ ))}
+ </div>
+ )}
+ <p className="mt-1 text-xs text-ink-muted">数据来自 Open-Meteo，每 30 分钟刷新。</p>
+ </div>
+ );
+};
+
 interface SiteSettingsTabProps {
  value: SiteSettings;
  onChange: (key: keyof SiteSettings, value: any) => void;
@@ -27,6 +79,7 @@ interface SiteSettingsTabProps {
 
 const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({ value, onChange }) => {
  const [generatedIcons, setGeneratedIcons] = useState<string[]>([]);
+ const spaces = value.spaces?.length ? value.spaces : [DEFAULT_SPACE];
 
  const updateGeneratedIcons = (text: string) => {
  setGeneratedIcons(Array.from({ length: 6 }, () => generateSvgIcon(text, randomGradient())));
@@ -140,6 +193,49 @@ const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({ value, onChange }) =>
  />
  <p className="mt-1 text-xs text-ink-soft">调高会让壁纸更淡，文字更清晰</p>
  </div>
+ </div>
+
+ <div>
+ <label className={sectionTitle}><Search size={15} />网页搜索</label>
+ <select value={value.searchEngine || DEFAULT_ENGINE_ID} onChange={e => onChange('searchEngine', e.target.value)} className={`${fieldClass} w-full`}>
+ {SEARCH_ENGINES.map(engine => <option key={engine.id} value={engine.id}>{engine.name}</option>)}
+ </select>
+ <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+ 搜索框里回车：有匹配的书签就打开第一个，没有就用默认引擎搜索；Shift + 回车 总是网页搜索。
+ 前缀直达：{BANGS.map(item => `!${item.bang} ${item.name}`).join('、')}。
+ </p>
+ </div>
+
+ <WeatherPicker value={value.weather} onChange={next => onChange('weather', next)} />
+
+ <div>
+ <label className={sectionTitle}><Layers size={15} />桌面</label>
+ <p className="mb-2 text-xs text-ink-soft">像 macOS 的多个桌面：每个桌面显示各自的分类。分类在「分类管理」里指定所在桌面，菜单栏或 Ctrl + ← / → 切换。</p>
+ <div className="space-y-1.5">
+ {spaces.map((space, index) => (
+ <div key={space.id} className="flex items-center gap-2">
+ <span className="w-5 text-right text-xs tabular-nums text-ink-muted">{index + 1}</span>
+ <input value={space.name} maxLength={16} onChange={e => onChange('spaces', spaces.map(item => item.id === space.id ? { ...item, name: e.target.value } : item))} className={`${fieldClass} flex-1`} />
+ <button
+ type="button"
+ disabled={spaces.length < 2}
+ onClick={() => {
+ const rest = spaces.filter(item => item.id !== space.id);
+ if (confirm(`删除「${space.name}」？其中的分类会回到「${rest[0].name}」，书签不会丢失。`)) onChange('spaces', rest);
+ }}
+ aria-label={`删除桌面 ${space.name}`}
+ className="rounded-md p-1.5 text-ink-muted hover:bg-sunken hover:text-danger disabled:opacity-30"
+ >
+ <Trash2 size={14} />
+ </button>
+ </div>
+ ))}
+ </div>
+ {spaces.length < 9 && (
+ <button type="button" onClick={() => onChange('spaces', [...spaces, { id: makeSpaceId(), name: `桌面 ${spaces.length + 1}` }])} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-line-strong bg-raised px-3 py-1.5 text-xs font-medium text-ink-soft hover:text-ink">
+ <Plus size={13} />添加桌面
+ </button>
+ )}
  </div>
  </div>
  </div>

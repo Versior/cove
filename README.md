@@ -11,7 +11,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/tests-11%20passing-3fb950)](#工程实践)
+[![Tests](https://img.shields.io/badge/tests-15%20passing-3fb950)](#工程实践)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [快速开始](#快速开始) · [设计语言](#设计语言) · [架构](#架构) · [工程实践](#工程实践)
@@ -58,6 +58,12 @@ Cove 的取舍很明确：
 - **拖拽到分类** — 卡片直接拖进左侧文件夹栏，完成移动
 - **整理模式** — 多选、批量移动分类、批量置顶、批量加标签、批量删除
 - **命令面板** — `⌘K` 唤起，键盘完成搜索与跳转
+- **搜索直达网页** — 页面任意处直接打字即搜索；回车打开第一个匹配的书签，没有匹配或按住 Shift 时用默认引擎搜索；`!g` `!bd` `!gh` `!yt` 等前缀直达对应站点
+- **多桌面** — 像 macOS 的 Spaces，每个桌面显示各自的分类，菜单栏或 `Ctrl + ← / →` 切换；搜索始终覆盖全部桌面
+- **一键收藏** — 设置 → 快捷收藏，把「收藏到 Cove」拖到书签栏，任意网页点一下弹出添加窗口，保存后自动关闭
+- **书签备注** — 可编辑、可搜索，悬停卡片时显示
+- **服务在线状态** — 给自建服务的书签打开「显示在线状态」，卡片上出现绿 / 红小圆点，每分钟从边缘探测一次
+- **菜单栏天气** — 设置城市后显示当前天气与温度（Open-Meteo，免 Key）
 - **右键菜单** — 复制链接、二维码、编辑、置顶、删除
 - **首屏自适应** — 按容器高度与实测格子高度计算首屏条数，宽屏不留下大片空白
 
@@ -69,6 +75,7 @@ Cove 的取舍很明确：
 - 内容哈希比对：数据未变化时跳过 R2 上传
 - 固定备份对象：只维护 `cove/latest.json` 一份，不堆积时间戳历史，可在「设置 → 备份与恢复」一键恢复
 - JSON / HTML 双向导入导出，导入时同名文件夹自动合并到现有分类
+- 书签整理：重复网址检测、按需失效链接检测（附 Internet Archive 存档入口）、标签重命名 / 合并 / 删除
 
 ### AI
 
@@ -108,7 +115,7 @@ npm run dev          # http://localhost:5173
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # node:test，11 个用例
+npm test             # node:test，15 个用例
 npm run build        # typecheck + vite build
 ```
 
@@ -220,6 +227,8 @@ Cove 的视觉不是"调了几次颜色"，而是从 macOS 的系统材质反向
 │  │ dnd-kit        │     │ /api/ai       代理 AI 请求   │  │
 │  └────────────────┘     │ /api/favicon  图标代理       │  │
 │                          │ /api/fetchtitle 标题抓取    │  │
+│                          │ /api/linkcheck 可达性探测   │  │
+│                          │ /api/weather  天气代理      │  │
 │                          └──────────┬──────────────────┘  │
 │                                     │                     │
 │                    ┌────────────────┴───────────────┐     │
@@ -243,7 +252,9 @@ Cove 的视觉不是"调了几次颜色"，而是从 macOS 的系统材质反向
 │       ├── storage.ts         # 数据、配置读写与 R2 备份读取
 │       ├── ai.ts              # AI 代理（Key 只在服务端）
 │       ├── favicon.ts         # 图标代理（边缘抓取 + Cache API 缓存）
-│       └── fetchtitle.ts      # 标题抓取
+│       ├── fetchtitle.ts      # 标题抓取
+│       ├── linkcheck.ts       # 失效检测与服务在线状态共用的可达性探测
+│       └── weather.ts         # 天气代理（Open-Meteo + 边缘缓存）
 ├── components/                # UI 组件
 ├── services/                  # 纯逻辑模块
 │   ├── density.ts             # 密度三档的尺寸映射
@@ -251,6 +262,10 @@ Cove 的视觉不是"调了几次颜色"，而是从 macOS 的系统材质反向
 │   ├── sorting.ts             # 五种排序 + 手动序
 │   ├── wallpaper.ts           # 壁纸预设与自定义
 │   ├── importMerge.ts         # 导入时按名称合并分类
+│   ├── webSearch.ts           # 网页搜索与 !前缀
+│   ├── linkStatus.ts          # 探测结果判定（失效 / 在线）
+│   ├── spaces.ts              # 多桌面归属
+│   ├── tags.ts                # 标签统计、重命名、合并
 │   └── dataNormalization.ts   # 数据规范化
 ├── tests/core.test.ts         # 核心用例
 └── index.css                  # 设计令牌 + 材质系统
@@ -293,15 +308,19 @@ $ npm test
 ✔ reorders by order field and keeps the drag result visible
 ✔ refuses to treat corrupted KV data as an empty dataset
 ✔ category lock stores only a salted hash and drops legacy plaintext passwords
+✔ web search resolves bangs, direct urls and the default engine
+✔ link checks treat auth and server errors as uncertain, services as up or down
+✔ tag rename merges into an existing tag without duplicates
+✔ spaces: children follow their top-level parent and unknown spaces fall back to the first
 
-tests 11 · pass 11 · fail 0
+tests 15 · pass 15 · fail 0
 ```
 
 覆盖的是**容易悄悄坏掉的地方**：数据规范化、导入合并、冲突检测、R2 去重、版本回退、损坏数据保护、SSRF 白名单、拖拽序持久化。
 
 ### 类型
 
-`tsc --noEmit` 零错误，已开启 `noUnusedLocals` / `noUnusedParameters`。目前未开启 `strict`，这是后续要补的工程债。
+`strict: true` + `noUnusedLocals` + `noUnusedParameters`，`tsc --noEmit` 零错误。
 
 ### 依赖
 
@@ -321,7 +340,7 @@ tests 11 · pass 11 · fail 0
 
 - [ ] 书签快照与历史回滚
 - [ ] 多用户与权限
-- [ ] 标签体系重构（独立实体，支持重命名/合并）
+- [x] 标签重命名 / 合并 / 删除
 - [x] 主 chunk 拆包（1.2 MB → 369 KB，图标全集与拼音字典按需加载）
 - [ ] 移动端手势优化
 
