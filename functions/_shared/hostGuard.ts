@@ -2,7 +2,7 @@
  * 判定地址是否为内网 / 本地 / 保留地址。
  *
  * 用途：
- * - `api/fetchtitle` 抓取网页标题前过滤目标
+ * - `safeFetch` 在每一跳重定向前过滤目标（fetchtitle / favicon）
  * - `api/ai` 校验用户可填的 OpenAI Compatible Base URL，避免带着 Secret 打内网
  *
  * 覆盖 IPv4 变体（十进制整数、超界段）、IPv6（回环 / 链路本地 / ULA / IPv4 映射）
@@ -40,6 +40,12 @@ export const isBlockedHost = (hostname: string): boolean => {
     if (/^fe[89ab][0-9a-f]:/.test(host)) return true; // fe80::/10
     const mapped = host.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (mapped) return isBlockedHost(mapped.slice(1).join('.'));
+    // WHATWG URL 会把 [::ffff:127.0.0.1] 规范化成十六进制写法 ::ffff:7f00:1
+    const mappedHex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHex) {
+      const [high, low] = mappedHex.slice(1).map(part => parseInt(part, 16));
+      return isBlockedHost([high >> 8, high & 255, low >> 8, low & 255].join('.'));
+    }
     return false;
   }
 

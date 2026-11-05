@@ -1,27 +1,18 @@
 export const APP_DATA_KEY = 'app_data';
-/**
- * R2 固定备份对象键。
- *
- * 保持 `cloudnav/` 前缀不变：这是已部署实例里真实存在的对象，
- * 改名会影响线上备份的读写位置，属于数据迁移，不做。
- */
-export const LATEST_BACKUP_KEY = 'cloudnav/latest.json';
+/** R2 固定备份对象键：只维护这一份最新备份。 */
+export const LATEST_BACKUP_KEY = 'cove/latest.json';
 
 export interface StorageEnv {
   COVE_KV?: KVNamespace;
   COVE_BACKUPS?: R2Bucket;
-  NAVIX_KV?: KVNamespace;
-  CLOUDNAV_KV?: KVNamespace;
-  NAVIX_BACKUPS?: R2Bucket;
-  CLOUDNAV_BACKUPS?: R2Bucket;
 }
 
-/**
- * R2 绑定：按 新名 → 旧名 的顺序探测。
- * 换名后若忘记改绑定，备份会静默失效，所以这里必须同时兼容三代命名。
- */
-export const getBackupBucket = (env: StorageEnv): R2Bucket | undefined =>
-  env.COVE_BACKUPS || env.NAVIX_BACKUPS || env.CLOUDNAV_BACKUPS;
+const getBackupBucket = (env: StorageEnv): R2Bucket | undefined => env.COVE_BACKUPS;
+
+export const getStorageKv = (env: StorageEnv): KVNamespace => {
+  if (!env.COVE_KV) throw new Error('KV 绑定未配置：请绑定 COVE_KV');
+  return env.COVE_KV;
+};
 
 export interface StoredData {
   links: Record<string, unknown>[];
@@ -63,12 +54,8 @@ const cleanLinks = (value: unknown, categoryIds: Set<string>): Record<string, un
       return true;
     })
     .map(link => {
-      const { credentials: _credentials, health: _health, ...rest } = link;
-      const rawCategoryId = String(rest.categoryId || 'common');
-      const categoryId = rawCategoryId === '__inbox__' || !categoryIds.has(rawCategoryId)
-        ? 'common'
-        : rawCategoryId;
-      return { ...rest, categoryId };
+      const categoryId = String(link.categoryId || 'common');
+      return { ...link, categoryId: categoryIds.has(categoryId) ? categoryId : 'common' };
     });
 };
 
@@ -86,12 +73,6 @@ export const normalizeData = (value: unknown): StoredData => {
   return { links, categories, version, updatedAt };
 };
 
-export const getStorageKv = (env: StorageEnv): KVNamespace => {
-  const kv = env.COVE_KV || env.NAVIX_KV || env.CLOUDNAV_KV;
-  if (!kv) throw new Error('KV 绑定未配置：请绑定 COVE_KV（兼容旧名 NAVIX_KV / CLOUDNAV_KV）');
-  return kv;
-};
-
 const contentOf = (data: StoredData) => ({ links: data.links, categories: data.categories });
 
 export const hashData = async (data: StoredData): Promise<string> => {
@@ -100,14 +81,20 @@ export const hashData = async (data: StoredData): Promise<string> => {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 };
 
+/**
+ * 读取当前数据。KV 里的值损坏时直接抛错：
+ * 若当成空数据返回，下一次保存就会把损坏但可能可修复的数据整体覆盖掉。
+ */
 export const readStoredDataWithPresence = async (env: StorageEnv) => {
   const raw = await getStorageKv(env).get(APP_DATA_KEY);
   if (!raw) return { data: normalizeData({}), exists: false };
+  let parsed: unknown;
   try {
-    return { data: normalizeData(JSON.parse(raw)), exists: true };
+    parsed = JSON.parse(raw);
   } catch {
-    return { data: normalizeData({}), exists: true };
+    throw new Error('KV 中的书签数据已损坏，拒绝读写');
   }
+  return { data: normalizeData(parsed), exists: true };
 };
 
 export const readStoredData = async (env: StorageEnv): Promise<StoredData> =>
@@ -144,27 +131,13 @@ export const writeLatestBackup = async (env: StorageEnv, data: StoredData, hash:
   return operation;
 };
 
-export const pruneLatestBackups = async (env: StorageEnv) => {
+/** 读取 R2 最新备份，供前端「从云端备份恢复」使用。 */
+export const readLatestBackup = async (env: StorageEnv) => {
   const bucket = getBackupBucket(env);
-  if (!bucket) return { status: 'missing-binding' as const, deleted: [] as string[] };
-
-  const deleted: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({
-      prefix: 'cloudnav/',
-      limit: 1000,
-      ...(cursor ? { cursor } : {}),
-    });
-    for (const object of page.objects || []) {
-      if (object.key === LATEST_BACKUP_KEY) continue;
-      await bucket.delete(object.key);
-      deleted.push(object.key);
-    }
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-
-  return { status: 'cleaned' as const, deleted };
+  if (!bucket) return { status: 'missing-binding' as const };
+  const object = await bucket.get(LATEST_BACKUP_KEY);
+  if (!object) return { status: 'empty' as const };
+  return { status: 'found' as const, data: normalizeData(await object.json()) };
 };
 
 let persistQueue: Promise<void> = Promise.resolve();

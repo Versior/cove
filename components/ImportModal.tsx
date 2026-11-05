@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useModalA11y } from './useModalA11y';
-import { X, Upload, FileText, ArrowRight, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
-import { Category, LinkItem, SearchConfig, AIConfig } from '../types';
+import { X, Upload, FileText, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
+import { Category, LinkItem } from '../types';
 import { parseBookmarks } from '../services/bookmarkParser';
 import { normalizeUrl } from '../services/duplicateService';
+import { mergeImportedStructure } from '../services/importMerge';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -11,8 +12,6 @@ interface ImportModalProps {
   existingLinks: LinkItem[];
   categories: Category[];
   onImport: (newLinks: LinkItem[], newCategories: Category[]) => void;
-  onImportSearchConfig?: (searchConfig: SearchConfig) => void;
-  onImportAIConfig?: (aiConfig: AIConfig) => void;
 }
 
 const ImportModal: React.FC<ImportModalProps> = ({ 
@@ -21,13 +20,10 @@ const ImportModal: React.FC<ImportModalProps> = ({
   existingLinks, 
   categories, 
   onImport,
-  onImportSearchConfig,
-  onImportAIConfig
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   useModalA11y(isOpen, onClose, modalRef);
   const [step, setStep] = useState<'upload' | 'preview'>('upload');
-  const [file, setFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   
   // Analysis Results
@@ -39,8 +35,6 @@ const ImportModal: React.FC<ImportModalProps> = ({
   const [parsedLinks, setParsedLinks] = useState<LinkItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [parsedCategories, setParsedCategories] = useState<Category[]>([]);
-  const [parsedSearchConfig, setParsedSearchConfig] = useState<SearchConfig | null>(null);
-  const [parsedAIConfig, setParsedAIConfig] = useState<AIConfig | null>(null);
   
   // Options
   const [importMode, setImportMode] = useState<'original' | 'merge'>('original');
@@ -51,7 +45,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
 
   // Parse JSON backup file
-  const parseJsonBackup = async (file: File): Promise<{ links: LinkItem[], categories: Category[], searchConfig?: SearchConfig, aiConfig?: AIConfig }> => {
+  const parseJsonBackup = async (file: File): Promise<{ links: LinkItem[], categories: Category[] }> => {
     const text = await file.text();
     const data = JSON.parse(text);
     
@@ -60,26 +54,14 @@ const ImportModal: React.FC<ImportModalProps> = ({
       throw new Error('Invalid backup file format');
     }
     
-    return {
-      links: data.links,
-      categories: data.categories,
-      searchConfig: data.searchConfig,
-      aiConfig: data.aiConfig && {
-        provider: data.aiConfig.provider,
-        baseUrl: data.aiConfig.baseUrl || '',
-        model: data.aiConfig.model || 'gemini-2.5-flash',
-      },
-    };
+    return { links: data.links, categories: data.categories };
   };
 
 
   const resetState = () => {
     setStep('upload');
-    setFile(null);
     setParsedLinks([]);
     setParsedCategories([]);
-    setParsedSearchConfig(null);
-    setParsedAIConfig(null);
     setNewLinksCount(0);
     setDuplicateCount(0);
     setNewCategoriesCount(0);
@@ -95,12 +77,11 @@ const ImportModal: React.FC<ImportModalProps> = ({
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
     
-    setFile(selectedFile);
     setAnalyzing(true);
     setImportType(type);
 
     try {
-        let result: { links: LinkItem[], categories: Category[], searchConfig?: SearchConfig, aiConfig?: AIConfig };
+        let result: { links: LinkItem[], categories: Category[] };
         
         if (type === 'html') {
             result = await parseBookmarks(selectedFile);
@@ -124,14 +105,12 @@ const ImportModal: React.FC<ImportModalProps> = ({
             }
         });
 
-        // 3. Category Diff
+        // 3. Category Diff：保留全部导入分类用于映射，只在计数时排除同名分类
         const existingCategoryNames = new Set(categories.map(c => c.name));
         const uniqueNewCategories = result.categories.filter(c => !existingCategoryNames.has(c.name));
 
         setParsedLinks(uniqueNewLinks);
-        setParsedCategories(uniqueNewCategories);
-        setParsedSearchConfig(result.searchConfig || null);
-        setParsedAIConfig(result.aiConfig || null);
+        setParsedCategories(result.categories);
         setNewLinksCount(uniqueNewLinks.length);
         setDuplicateCount(duplicates);
         setNewCategoriesCount(uniqueNewCategories.length);
@@ -140,7 +119,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
     } catch (error) {
         const errorMessage = type === 'html' 
             ? "解析文件失败，请确保是标准的 Chrome HTML 书签文件。"
-            : "解析文件失败，请确保是有效的 navix_backup.json 或旧版 cloudnav_backup.json 文件。";
+            : "解析文件失败，请确保是 Cove 导出的 JSON 备份文件。";
         alert(errorMessage);
         console.error(error);
     } finally {
@@ -175,55 +154,13 @@ const ImportModal: React.FC<ImportModalProps> = ({
           // In merge mode, we do NOT add new categories from the file
           finalCategories = []; 
       } else {
-          // Keep structure mode
-          // We need to merge categories carefully.
-          // Since parseBookmarks generates IDs for categories, if a category name already exists in `categories`, 
-          // we should remap the links to the existing category ID instead of creating a new duplicate-named category.
-          
-          const nameToIdMap = new Map<string, string>();
-          categories.forEach(c => nameToIdMap.set(c.name, c.id));
-
-          // Valid new categories to add
-          const categoriesToAdd: Category[] = [];
-
-          parsedCategories.forEach(pc => {
-              if (nameToIdMap.has(pc.name)) {
-                  // Category exists, we don't add it.
-                  // But we need to know its ID to remap links.
-              } else {
-                  categoriesToAdd.push(pc);
-                  nameToIdMap.set(pc.name, pc.id); // Add new one to map
-              }
-          });
-
-          // Remap links
-          finalLinks = finalLinks.map(link => {
-             // Find the name of the category this link was assigned to in the parser
-             const originalCat = parsedCategories.find(c => c.id === link.categoryId) 
-                                 || categories.find(c => c.id === link.categoryId); // Fallback
-             
-             if (originalCat && nameToIdMap.has(originalCat.name)) {
-                 return { ...link, categoryId: nameToIdMap.get(originalCat.name)! };
-             }
-             // If for some reason we can't find the map, put it in common
-             return { ...link, categoryId: 'common' };
-          });
-
-          finalCategories = categoriesToAdd;
+          // 保留原结构：同名分类合并到现有分类，其余作为新分类加入
+          const merged = mergeImportedStructure(finalLinks, parsedCategories, categories);
+          finalLinks = merged.links;
+          finalCategories = merged.categories;
       }
 
       onImport(finalLinks, finalCategories);
-      
-      // Import search config if available
-      if (parsedSearchConfig && onImportSearchConfig) {
-          onImportSearchConfig(parsedSearchConfig);
-      }
-      
-      // Import AI config if available
-      if (parsedAIConfig && onImportAIConfig) {
-          onImportAIConfig(parsedAIConfig);
-      }
-      
       handleClose();
   };
 

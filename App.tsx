@@ -1,29 +1,26 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Cloud, Loader2, Lock, Moon, Pin, Plus, Save, Search, Settings, Sun, Upload,
+  Loader2, Moon, Pin, Plus, Save, Search, Settings, Sun, Upload,
 } from 'lucide-react';
 import { DndContext, DragEndEvent, PointerSensor, closestCenter, useSensor, useSensors, KeyboardSensor } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
-import { AIConfig, Category, DEFAULT_CATEGORIES, ExternalSearchSource, INITIAL_LINKS, LinkItem, SearchConfig, SearchMode, SiteSettings, CardStyle, Density } from './types';
-import { LOCAL_STORAGE_KEY, AI_CONFIG_KEY, SEARCH_CONFIG_KEY, SITE_SETTINGS_KEY, SORT_CONFIG_KEY } from './constants/storageKeys';
+import { AIConfig, Category, DEFAULT_CATEGORIES, INITIAL_LINKS, LinkItem, SiteSettings, CardStyle, Density } from './types';
+import { LOCAL_STORAGE_KEY, AI_CONFIG_KEY, SITE_SETTINGS_KEY, SORT_CONFIG_KEY, THEME_KEY } from './constants/storageKeys';
 import { applyReorder, applySort, canReorder, normalizeSortConfig, type SortConfig } from './services/sorting';
 import { normalizeDensity } from './services/density';
 import { computeFillCount, useElementHeight, useGridColumns } from './services/fillScreen';
 import { applyWallpaper } from './services/wallpaper';
 
 import { normalizeAppData } from './services/dataNormalization';
-import { parseBookmarks } from './services/bookmarkParser';
 import { generateBookmarkHtml, downloadHtmlFile } from './services/exportService';
-import { suggestCategory } from './services/geminiService';
-import { getDefaultSearchSources } from './services/defaultSearchSources';
-import { matchesFilters, matchesQuery, parseSearchQuery, sortByRelevance } from './services/searchService';
+import { isPinyinReady, loadPinyin, matchesFilters, matchesQuery, parseSearchQuery, sortByRelevance } from './services/searchService';
+import type { SettingsTab } from './components/SettingsModal';
 import Sidebar from './components/Sidebar';
-import TopBar from './components/TopBar';
 import BookmarkToolbar from './components/BookmarkToolbar';
 import BookmarkGrid from './components/BookmarkGrid';
 import ArrangeActionBar from './components/ArrangeActionBar';
 import Launchpad from './components/Launchpad';
-import { ToastProvider, useToast } from './components/Toast';
+import { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import CategoryAuthModal from './components/CategoryAuthModal';
 import CategoryManagerModal from './components/CategoryManagerModal';
@@ -33,7 +30,6 @@ import ModalErrorBoundary from './components/ModalErrorBoundary';
 const ImportModal = React.lazy(() => import('./components/ImportModal'));
 const LinkModal = React.lazy(() => import('./components/LinkModal'));
 const QRCodeModal = React.lazy(() => import('./components/QRCodeModal'));
-const SearchConfigModal = React.lazy(() => import('./components/SearchConfigModal'));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal'));
 const SyncConflictModal = React.lazy(() => import('./components/SyncConflictModal'));
 
@@ -46,11 +42,32 @@ const DENSITY_GAPS: Record<Density, number> = {
   cozy: 12,
   spacious: 16,
 };
-const DEFAULT_SITE_SETTINGS = { title: 'Cove - 我的导航', navTitle: 'Cove', favicon: '', cardStyle: 'icon' as const, density: 'cozy' as const, wallpaperPreset: 'sonoma' as const, wallpaperDim: 12, passwordExpiryDays: 7 };
+const DEFAULT_SITE_SETTINGS = { title: 'Cove - 我的导航', navTitle: 'Cove', favicon: '', cardStyle: 'icon' as const, density: 'cozy' as const, wallpaperPreset: 'sonoma' as const, wallpaperDim: 12 };
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
 const DEFAULT_AI_CONFIG: AIConfig = { provider: 'gemini', baseUrl: '', model: 'gemini-2.5-flash' };
-type SettingsTab = 'site' | 'ai' | 'tools' | 'duplicates' | 'backup';
+
+/** 从分享文本里取第一个网址：安卓分享常把链接放在 text 而不是 url 参数里。 */
+const extractUrl = (text: string | null) => text?.match(/https?:\/\/\S+/)?.[0] || '';
+
+/**
+ * 菜单栏时钟：日期 / 星期 / 时间三段。
+ * 独立成组件，每 20 秒只重渲染这一小块，不带动整个 App。
+ */
+const MenuBarClock: React.FC = () => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 20_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="flex items-center gap-2 text-[12.5px] tabular-nums text-ink-soft">
+      <span>{`${now.getMonth() + 1}月${now.getDate()}日`}</span>
+      <span className="text-ink-muted">{['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]}</span>
+      <span className="font-medium text-ink">{`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`}</span>
+    </span>
+  );
+};
 type ContextState = {
   isOpen: boolean;
   position: { x: number; y: number };
@@ -117,29 +134,11 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [darkMode, setDarkMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  /** 菜单栏时钟：每分钟更新一次，只影响这一小块文本。 */
-  /**
-   * 菜单栏时钟：拆成"日期 / 星期 / 时间"三段。
-   * macOS 的菜单栏就是这样分层的——日期和星期是次要信息，时间才是主体。
-   */
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 20_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const clockDate = `${now.getMonth() + 1}月${now.getDate()}日`;
-  const clockWeekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
-  const clockTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const [pinyinReady, setPinyinReady] = useState(isPinyinReady);
   const [sortConfig, setSortConfig] = useState<SortConfig>(() => normalizeSortConfig(readJson<unknown>(SORT_CONFIG_KEY, null)));
   const [arrangeMode, setArrangeMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [isAdvancedFilterOpen, setIsAdvancedFilterOpen] = useState(false);
-  const [advancedFilters, setAdvancedFilters] = useState<Record<string, string | boolean | undefined>>({});
-  const [searchMode, setSearchMode] = useState<SearchMode>('external');
-  const [externalSearchSources, setExternalSearchSources] = useState<ExternalSearchSource[]>([]);
-  const [selectedSearchSource, setSelectedSearchSource] = useState<ExternalSearchSource | null>(null);
-  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => readAIConfig());
@@ -149,15 +148,10 @@ const App: React.FC = () => {
       ...DEFAULT_SITE_SETTINGS,
       ...stored,
       density: normalizeDensity(stored.density),
-      // 桌面模式改造：旧数据里的详情/简约/列表统一迁到图标式，
-      // 否则老用户永远看不到新的桌面观感。
-      cardStyle: 'icon',
     };
   });
   const [authToken, setAuthToken] = useState(false);
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [extensionToken, setExtensionToken] = useState('');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const dataVersionRef = useRef(0);
   const syncQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
@@ -175,7 +169,6 @@ const App: React.FC = () => {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>();
   const [aiSettingsCategoryId, setAiSettingsCategoryId] = useState('');
   const [aiSettingsAction, setAiSettingsAction] = useState<'rename' | 'structure' | ''>('');
-  const [isSearchConfigOpen, setIsSearchConfigOpen] = useState(false);
   const [qrCode, setQrCode] = useState({ isOpen: false, url: '', title: '' });
   const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextState>({ isOpen: false, position: { x: 0, y: 0 }, link: null, category: null, type: 'link' });
@@ -224,7 +217,6 @@ const App: React.FC = () => {
         const result = await response.json().catch(() => ({}));
         if (response.status === 401) {
           setAuthToken(false);
-          setIsAuthOpen(true);
           setSyncStatus('error');
           return false;
         }
@@ -267,7 +259,6 @@ const App: React.FC = () => {
     const response = await fetch('/api/storage');
     if (response.status === 401) {
       setAuthToken(false);
-      setIsAuthOpen(true);
       return;
     }
     if (!response.ok) throw new Error(`云端数据读取失败（HTTP ${response.status}）`);
@@ -289,9 +280,8 @@ const App: React.FC = () => {
   };
 
   const loadRemoteConfig = async () => {
-    const [aiResponse, searchResponse, siteResponse] = await Promise.all([
+    const [aiResponse, siteResponse] = await Promise.all([
       fetch('/api/storage?getConfig=ai'),
-      fetch('/api/storage?getConfig=search'),
       fetch('/api/storage?getConfig=website'),
     ]);
     if (aiResponse.ok) {
@@ -299,15 +289,6 @@ const App: React.FC = () => {
       const next = mergeClientAIConfig(remote);
       setAiConfig(next);
       localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(next));
-    }
-    if (searchResponse.ok) {
-      const config = await searchResponse.json() as Partial<SearchConfig>;
-      if (config.mode || config.externalSources) {
-        setSearchMode(config.mode || 'external');
-        setExternalSearchSources(config.externalSources || []);
-        setSelectedSearchSource(config.selectedSource || null);
-        localStorage.setItem(SEARCH_CONFIG_KEY, JSON.stringify(config));
-      }
     }
     if (siteResponse.ok) {
       const remote = await siteResponse.json();
@@ -317,12 +298,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      if (localStorage.getItem(THEME_KEY) === 'dark' || (!localStorage.getItem(THEME_KEY) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
         setDarkMode(true);
         document.documentElement.classList.add('dark');
       }
       const params = new URLSearchParams(window.location.search);
-      const addUrl = params.get('add_url');
+      // add_url / add_title 来自 PWA 分享（见 manifest share_target）
+      const addUrl = params.get('add_url') || extractUrl(params.get('add_text'));
       if (addUrl) {
         window.history.replaceState({}, '', window.location.pathname);
         setPrefillLink({ title: params.get('add_title') || '', url: addUrl, categoryId: 'common' });
@@ -332,10 +314,8 @@ const App: React.FC = () => {
         const response = await fetch('/api/storage?checkAuth=true');
         const auth = response.ok ? await response.json() : { requiresAuth: true, authenticated: false };
         setAuthToken(!!auth.authenticated);
-        setExtensionToken(auth.extensionToken || '');
         setRequiresAuth(!!auth.requiresAuth);
         if (auth.requiresAuth && !auth.authenticated) {
-          setIsAuthOpen(true);
           loadLocal();
           return;
         }
@@ -400,10 +380,7 @@ const App: React.FC = () => {
     try {
       const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
       if (!response.ok) return false;
-      const result = await response.json();
       setAuthToken(true);
-      setExtensionToken(result.extensionToken || '');
-      setIsAuthOpen(false);
       await loadRemoteConfig();
       await loadRemoteData(true);
       return true;
@@ -415,18 +392,36 @@ const App: React.FC = () => {
   const handleLogout = async () => {
     await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) }).catch(() => undefined);
     setAuthToken(false);
-    setExtensionToken('');
     setSyncStatus('idle');
+    // 登出后不在浏览器里留全量书签：共用电脑时任何人打开 DevTools 都能看到
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
     loadLocal();
   };
 
   const handleCategoryActionAuth = async (password: string) => {
     const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }).catch(() => null);
     if (!response?.ok) return false;
-    const result = await response.json();
     setAuthToken(true);
-    setExtensionToken(result.extensionToken || '');
     return true;
+  };
+
+  /** 用 R2 最新备份覆盖当前数据，走正常同步流程（版本号递增，可再次被备份）。 */
+  const restoreFromBackup = async () => {
+    const response = await fetch('/api/storage?getBackup=latest').catch(() => null);
+    if (!response?.ok) {
+      showToast('读取云端备份失败', { type: 'error' });
+      return;
+    }
+    const result = await response.json() as { status: string; data?: unknown };
+    if (result.status !== 'found') {
+      showToast(result.status === 'missing-binding' ? '服务端未绑定 R2' : '云端还没有备份', { type: 'info' });
+      return;
+    }
+    const backup = parseStoredData(result.data);
+    if (!confirm(`将用云端备份（${backup.links.length} 条书签、${backup.categories.length} 个分类）覆盖当前数据，确定吗？`)) return;
+    updateData(backup.links, backup.categories);
+    setIsSettingsOpen(false);
+    showToast('已从云端备份恢复', { type: 'success' });
   };
 
   const handleSaveAIConfig = async (config: AIConfig, nextSiteSettings?: typeof siteSettings) => {
@@ -461,17 +456,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRestoreAIConfig = async (config: AIConfig) => handleSaveAIConfig(config);
-
-  const persistSearchConfig = async (sources: ExternalSearchSource[], mode: SearchMode, selected?: ExternalSearchSource | null) => {
-    const config = { mode, externalSources: sources, selectedSource: selected === undefined ? selectedSearchSource : selected };
-    setSearchMode(mode);
-    setExternalSearchSources(sources);
-    if (selected !== undefined) setSelectedSearchSource(selected);
-    localStorage.setItem(SEARCH_CONFIG_KEY, JSON.stringify(config));
-    if (authToken) await fetch('/api/storage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ saveConfig: 'search', config }) }).catch(() => undefined);
-  };
-
   const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[]) => {
     const categoryList = [...categories];
     newCategories.forEach(category => { if (!categoryList.some(existing => existing.id === category.id || existing.name === category.name)) categoryList.push(category); });
@@ -480,13 +464,11 @@ const App: React.FC = () => {
     showToast(`成功导入 ${newLinks.length} 个新书签`, { type: 'success' });
   };
 
-  const handleRestoreSearchConfig = (config: SearchConfig) => { void persistSearchConfig(config.externalSources, config.mode, config.selectedSource); };
-
   const toggleTheme = () => {
     const next = !darkMode;
     setDarkMode(next);
     document.documentElement.classList.toggle('dark', next);
-    localStorage.setItem('theme', next ? 'dark' : 'light');
+    localStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
   };
 
   const isCategoryLocked = (categoryId: string): boolean => {
@@ -524,7 +506,7 @@ const App: React.FC = () => {
 
   const handleAddLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     // 仅在站点确实启用访问密码时要求登录；纯本地模式下直接落本地，保持一致。
-    if (requiresAuth && !authToken) { setIsAuthOpen(true); return; }
+    if (requiresAuth && !authToken) return;
     const url = data.url.match(/^https?:\/\//) ? data.url : `https://${data.url}`;
     const newLink: LinkItem = { ...data, url, id: makeId(), createdAt: Date.now(), order: links.length };
     updateData([...links, newLink], categories);
@@ -560,9 +542,8 @@ const App: React.FC = () => {
     const hasSearch = !!searchQuery.trim();
     let result = links.filter(link => !link.deletedAt && !isCategoryLocked(link.categoryId));
     // 置顶板块已单独渲染同一批卡片，主页主列表排除以免重复
-    if (!hasSearch && !advancedFilterActive && selectedCategory === 'all') result = result.filter(link => !link.pinned);
+    if (!hasSearch && selectedCategory === 'all') result = result.filter(link => !link.pinned);
     if (hasSearch) result = result.filter(link => matchesFilters(link, parsed, categories) && matchesQuery(link, parsed.text));
-    if (advancedFilterActive) result = result.filter(matchesAdvancedFilters);
     if (selectedCategory === 'pinned') {
       result = result.filter(link => link.pinned);
     } else if (selectedCategory !== 'all') {
@@ -622,18 +603,14 @@ const App: React.FC = () => {
   const structureCategoryFromContextMenu = () => { if (contextMenu.category) { setAiSettingsCategoryId(contextMenu.category.id); setAiSettingsAction('structure'); setSettingsInitialTab('ai'); setIsSettingsOpen(true); } closeContextMenu(); };
   const deleteCategoryFromContextMenu = () => { if (contextMenu.category) handleDeleteCategory(contextMenu.category.id); closeContextMenu(); };
 
-  const allTags = useMemo(() => Array.from(new Set(links.flatMap(link => link.tags || []))).sort(), [links]);
-  const advancedFilterActive = useMemo(() => Object.values(advancedFilters).some(value => value !== undefined && value !== '' && value !== false), [advancedFilters]);
-  const matchesAdvancedFilters = (link: LinkItem) => {
-    if (advancedFilters.status && link.status !== advancedFilters.status) return false;
-    if (advancedFilters.tag && !link.tags?.includes(String(advancedFilters.tag))) return false;
-    if (advancedFilters.hasNote && !link.note?.trim()) return false;
-    if (advancedFilters.untagged && (link.tags || []).length) return false;
-    return true;
-  };
 
   // UI 渲染用：缓存在依赖变化时重算，避免每次渲染都跑一遍过滤。
-  const displayedLinks = useMemo(computeDisplayed, [links, categories, selectedCategory, searchQuery, advancedFilterActive, advancedFilters, unlockedCategoryIds, sortConfig]);
+  // 第一次搜索时才加载拼音字典，加载完成后重算一次结果
+  useEffect(() => {
+    if (!searchQuery.trim() || pinyinReady) return;
+    void loadPinyin().then(() => setPinyinReady(true));
+  }, [searchQuery, pinyinReady]);
+  const displayedLinks = useMemo(computeDisplayed, [links, categories, selectedCategory, searchQuery, unlockedCategoryIds, sortConfig, pinyinReady]);
 
   const pinnedLinks = useMemo(
     () => applySort(links.filter(link => link.pinned && !isCategoryLocked(link.categoryId)), sortConfig),
@@ -798,19 +775,19 @@ const App: React.FC = () => {
   return <div className="mac-desktop flex h-screen overflow-hidden text-ink">
     {requiresAuth && !authToken && <AuthModal isOpen onLogin={handleLogin} />}
     {(!requiresAuth || authToken) && <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-    <Suspense fallback={null}>
     <div className="mac-desktop">
     {/* 顶部菜单栏 */}
     <div className="mac-menubar">
       {/* 左侧：应用名 + 菜单项，macOS 的 menubar 是紧凑等距的 */}
       <span className="flex items-center gap-1.5 pr-1">
-        <span className="grid h-4 w-4 place-items-center rounded-[4px] bg-accent text-[9px] font-bold text-ink-inverse">N</span>
+        <span className="grid h-4 w-4 place-items-center rounded-[4px] bg-accent text-[9px] font-bold text-ink-inverse">{Array.from(siteSettings.navTitle || 'Cove')[0]?.toUpperCase()}</span>
         <span className="font-semibold tracking-tight">{siteSettings.navTitle || 'Cove'}</span>
       </span>
       {[
         { label: '书签', onClick: () => { setSelectedCategory('pinned'); setSidebarOpen(false); } },
         { label: '设置', onClick: () => setIsSettingsOpen(true) },
         { label: '外观', onClick: toggleTheme },
+        ...(requiresAuth && authToken ? [{ label: '退出', onClick: () => void handleLogout() }] : []),
       ].map(item => (
         <button
           key={item.label}
@@ -824,11 +801,7 @@ const App: React.FC = () => {
 
       {/* 右侧：时钟 + 主题切换，用细竖线分隔 */}
       <span className="ml-auto flex items-center gap-2.5">
-        <span className="flex items-center gap-2 text-[12.5px] tabular-nums text-ink-soft">
-          <span>{clockDate}</span>
-          <span className="text-ink-muted">{clockWeekday}</span>
-          <span className="font-medium text-ink">{clockTime}</span>
-        </span>
+        <MenuBarClock />
         <span className="h-3 w-px bg-line" />
         <button
           type="button"
@@ -859,11 +832,11 @@ const App: React.FC = () => {
     />
       <CategoryAuthModal isOpen={!!lockedCategory} category={lockedCategory} onClose={() => setLockedCategory(null)} onUnlock={id => { setUnlockedCategoryIds(current => new Set(current).add(id)); setSelectedCategory(id); setLockedCategory(null); }} />
       <CategoryManagerModal isOpen={isCategoryManagerOpen} onClose={() => { setIsCategoryManagerOpen(false); setCategoryManagerEditId(''); }} categories={categories} onUpdateCategories={handleUpdateCategories} onDeleteCategory={handleDeleteCategory} onVerifyPassword={handleCategoryActionAuth} initialEditId={categoryManagerEditId} />
-      <ModalErrorBoundary onClose={() => setIsImportOpen(false)}><ImportModal isOpen={isImportOpen} onClose={() => setIsImportOpen(false)} existingLinks={links} categories={categories} onImport={handleImportConfirm} onImportSearchConfig={handleRestoreSearchConfig} onImportAIConfig={handleRestoreAIConfig} /></ModalErrorBoundary>
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => { setIsSettingsOpen(false); setSettingsInitialTab(undefined); setAiSettingsCategoryId(''); setAiSettingsAction(''); }} config={aiConfig} siteSettings={siteSettings} onSave={handleSaveAIConfig} links={links} categories={categories} onUpdateLinks={next => updateData(next, categories)} onUpdateCategories={next => updateData(links, next)} onUpdateData={updateData} onEditLink={link => { setIsSettingsOpen(false); setEditingLink(link); setIsLinkModalOpen(true); }} onExportJson={() => saveExport('json')} lastBackup={lastBackup} onOpenImport={() => { setIsSettingsOpen(false); setSettingsInitialTab('backup'); setIsImportOpen(true); }} authToken={authToken} extensionToken={extensionToken} initialAICategoryId={aiSettingsCategoryId} initialAIAction={aiSettingsAction || undefined} initialTab={settingsInitialTab} />
-      <SearchConfigModal isOpen={isSearchConfigOpen} onClose={() => setIsSearchConfigOpen(false)} sources={externalSearchSources} onSave={sources => void persistSearchConfig(sources, searchMode)} />
+      {/* 懒加载弹窗只在打开时挂载，各自一个 Suspense：首屏不必等这些 chunk，加载时也不会让整个桌面消失 */}
+      {isImportOpen && <ModalErrorBoundary onClose={() => setIsImportOpen(false)}><Suspense fallback={null}><ImportModal isOpen onClose={() => setIsImportOpen(false)} existingLinks={links} categories={categories} onImport={handleImportConfirm} /></Suspense></ModalErrorBoundary>}
+      {isSettingsOpen && <Suspense fallback={null}><SettingsModal isOpen onClose={() => { setIsSettingsOpen(false); setSettingsInitialTab(undefined); setAiSettingsCategoryId(''); setAiSettingsAction(''); }} config={aiConfig} siteSettings={siteSettings} onSave={handleSaveAIConfig} links={links} categories={categories} onUpdateLinks={next => updateData(next, categories)} onUpdateCategories={next => updateData(links, next)} onUpdateData={updateData} onEditLink={link => { setIsSettingsOpen(false); setEditingLink(link); setIsLinkModalOpen(true); }} onExportJson={() => saveExport('json')} lastBackup={lastBackup} onOpenImport={() => { setIsSettingsOpen(false); setSettingsInitialTab('backup'); setIsImportOpen(true); }} onRestoreBackup={authToken ? () => void restoreFromBackup() : undefined} initialAICategoryId={aiSettingsCategoryId} initialAIAction={aiSettingsAction || undefined} initialTab={settingsInitialTab} /></Suspense>}
       <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} links={links} categories={categories} actions={actions} onOpenLink={link => { recordVisit(link.id); window.open(link.url, '_blank', 'noopener,noreferrer'); }} onSelectCategory={id => { setSelectedCategory(id); setIsPaletteOpen(false); }} />
-      <SyncConflictModal isOpen={!!syncConflict} onClose={() => { syncBlockedRef.current = false; setSyncConflict(null); setSyncStatus('idle'); }} onUseLocal={() => { if (syncConflict) { syncBlockedRef.current = false; void syncToCloud(syncConflict.local.links, syncConflict.local.categories); setSyncConflict(null); } }} onUseCloud={() => { if (syncConflict) { syncBlockedRef.current = false; applyCloudData(syncConflict.cloud); setSyncConflict(null); setSyncStatus('idle'); } }} onMerge={() => { if (!syncConflict) return; const linkMap = new Map([...syncConflict.cloud.links, ...syncConflict.local.links].map(link => [link.id, link])); const catMap = new Map([...syncConflict.cloud.categories, ...syncConflict.local.categories].map(category => [category.id, category])); syncBlockedRef.current = false; dataVersionRef.current = syncConflict.cloud.version; updateData([...linkMap.values()], [...catMap.values()]); setSyncConflict(null); }} />
+      {syncConflict && <Suspense fallback={null}><SyncConflictModal isOpen onClose={() => { syncBlockedRef.current = false; setSyncConflict(null); setSyncStatus('idle'); }} onUseLocal={() => { if (syncConflict) { syncBlockedRef.current = false; void syncToCloud(syncConflict.local.links, syncConflict.local.categories); setSyncConflict(null); } }} onUseCloud={() => { if (syncConflict) { syncBlockedRef.current = false; applyCloudData(syncConflict.cloud); setSyncConflict(null); setSyncStatus('idle'); } }} onMerge={() => { if (!syncConflict) return; const linkMap = new Map([...syncConflict.cloud.links, ...syncConflict.local.links].map(link => [link.id, link])); const catMap = new Map([...syncConflict.cloud.categories, ...syncConflict.local.categories].map(category => [category.id, category])); syncBlockedRef.current = false; dataVersionRef.current = syncConflict.cloud.version; updateData([...linkMap.values()], [...catMap.values()]); setSyncConflict(null); }} /></Suspense>}
       <main className="material-content flex min-w-0 flex-1 flex-col">
         {/* 桌面模式：搜索并入顶部菜单栏，不再单独占一条工具栏 */}
         <div className="flex items-center gap-2 px-4 pb-1 pt-3">
@@ -990,7 +963,6 @@ const App: React.FC = () => {
         links={dockLinks}
         density={density}
         onOpen={openLink}
-        onEdit={link => { setEditingLink(link); setIsLinkModalOpen(true); }}
         onContextMenu={handleContextMenu}
       />
       <ArrangeActionBar
@@ -1002,10 +974,9 @@ const App: React.FC = () => {
         onDelete={batchDelete}
         onClear={clearSelection}
       />
-      <LinkModal isOpen={isLinkModalOpen} onClose={() => { setIsLinkModalOpen(false); setEditingLink(undefined); setPrefillLink(undefined); }} onSave={editingLink ? handleEditLink : handleAddLink} onDelete={editingLink ? handleDeleteLink : undefined} categories={categories} links={links} initialData={editingLink || (prefillLink as LinkItem)} aiConfig={aiConfig} defaultCategoryId={selectedCategory !== 'all' ? selectedCategory : undefined} />
+      {isLinkModalOpen && <Suspense fallback={null}><LinkModal isOpen onClose={() => { setIsLinkModalOpen(false); setEditingLink(undefined); setPrefillLink(undefined); }} onSave={editingLink ? handleEditLink : handleAddLink} onDelete={editingLink ? handleDeleteLink : undefined} categories={categories} links={links} initialData={editingLink || (prefillLink as LinkItem)} aiConfig={aiConfig} defaultCategoryId={selectedCategory !== 'all' ? selectedCategory : undefined} /></Suspense>}
       <ContextMenu isOpen={contextMenu.isOpen} position={contextMenu.position} targetType={contextMenu.type} isCategoryEditable={contextMenu.category?.id !== 'common'} onClose={closeContextMenu} onCopyLink={copyLinkToClipboard} onShowQRCode={showQRCode} onEditLink={editLinkFromContextMenu} onDeleteLink={deleteLinkFromContextMenu} onTogglePin={togglePinFromContextMenu} onOpenCategory={openCategoryFromContextMenu} onEditCategory={editCategoryFromContextMenu} onRenameCategory={renameCategoryFromContextMenu} onStructureCategory={structureCategoryFromContextMenu} onDeleteCategory={deleteCategoryFromContextMenu} />
-      <QRCodeModal isOpen={qrCode.isOpen} url={qrCode.url} title={qrCode.title} onClose={() => setQrCode({ isOpen: false, url: '', title: '' })} />
-      </Suspense>
+      {qrCode.isOpen && <Suspense fallback={null}><QRCodeModal isOpen url={qrCode.url} title={qrCode.title} onClose={() => setQrCode({ isOpen: false, url: '', title: '' })} /></Suspense>}
     </DndContext>}
   </div>
 };

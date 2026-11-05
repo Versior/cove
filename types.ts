@@ -15,7 +15,6 @@ export interface LinkItem {
   visitCount?: number;
   lastVisitedAt?: number;
   note?: string;
-  status?: 'unread' | 'read' | 'favorite' | 'archived';
 }
 
 export interface Category {
@@ -46,14 +45,6 @@ export interface SiteSettings {
   wallpaperPreset?: WallpaperPreset;
   /** 壁纸暗化程度 0-100，越大字越清晰。 */
   wallpaperDim?: number;
-  passwordExpiryDays: number;
-}
-
-export interface AppState {
-  links: LinkItem[];
-  categories: Category[];
-  darkMode: boolean;
-  settings?: SiteSettings;
 }
 
 export type AIProvider = 'gemini' | 'openai';
@@ -65,23 +56,6 @@ export interface AIConfig {
   hasApiKey?: boolean;
 }
 
-export type SearchMode = 'internal' | 'external';
-
-export interface ExternalSearchSource {
-  id: string;
-  name: string;
-  url: string;
-  icon?: string;
-  enabled: boolean;
-  createdAt: number;
-}
-
-export interface SearchConfig {
-  mode: SearchMode;
-  externalSources: ExternalSearchSource[];
-  selectedSource?: ExternalSearchSource | null;
-}
-
 export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'common', name: '常用推荐', icon: 'Star' },
 ];
@@ -89,7 +63,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
 
 /** 首次使用的示例数据：只保留少数常用站点，不再预置分类与示例站群。 */
 export const INITIAL_LINKS: LinkItem[] = [
-  { id: 's1', title: 'Google', url: 'https://www.google.com', categoryId: 'common', createdAt: Date.now(), description: '全球最大的搜索引擎', pinned: true, icon: 'https://t3.gstatic.cn/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=https://www.google.com' },
-  { id: 's2', title: '百度', url: 'https://www.baidu.com', categoryId: 'common', createdAt: Date.now(), description: '国内主流搜索引擎', pinned: true, icon: 'https://t3.gstatic.cn/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=https://www.baidu.com' },
-  { id: 'n1', title: 'IT之家', url: 'https://www.ithome.com', categoryId: 'common', createdAt: Date.now(), description: '数码科技资讯平台', pinned: true, icon: 'https://t3.gstatic.cn/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=128&url=https://www.ithome.com' },
+  { id: 's1', title: 'Google', url: 'https://www.google.com', categoryId: 'common', createdAt: Date.now(), description: '全球最大的搜索引擎', pinned: true },
+  { id: 's2', title: '百度', url: 'https://www.baidu.com', categoryId: 'common', createdAt: Date.now(), description: '国内主流搜索引擎', pinned: true },
+  { id: 'n1', title: 'IT之家', url: 'https://www.ithome.com', categoryId: 'common', createdAt: Date.now(), description: '数码科技资讯平台', pinned: true },
 ];

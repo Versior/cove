@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, FolderPlus, FolderTree, PauseCircle, Sparkles, Type, X } from 'lucide-react';
+import { Check, FolderPlus, FolderTree, PauseCircle, Sparkles, Type } from 'lucide-react';
 import { AIConfig, Category, LinkItem } from '../types';
 import { generateLinkDescription, suggestCategory, suggestFolderRename, suggestFolderStructure, testAIConnection } from '../services/geminiService';
 import { normalizeOpenAIEndpoint } from '../services/openaiEndpoint';

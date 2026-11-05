@@ -1,6 +1,17 @@
 import React from 'react';
-import { pinyin } from 'pinyin-pro';
 import { LinkItem, Category } from '../types';
+
+/**
+ * 拼音匹配按需加载：pinyin-pro 带字典约 460 KB，只有搜索时才用得到。
+ * 加载完成前 matchesQuery 只做普通文本匹配。
+ */
+let pinyinFn: typeof import('pinyin-pro').pinyin | null = null;
+let pinyinLoading: Promise<void> | null = null;
+export const isPinyinReady = () => pinyinFn !== null;
+export const loadPinyin = () => {
+  pinyinLoading ??= import('pinyin-pro').then(module => { pinyinFn = module.pinyin; });
+  return pinyinLoading;
+};
 
 export interface ParsedQuery { tag?: string; cat?: string; visited?: number; text: string }
 const getLinkSearchText = (link: LinkItem) => [link.title, link.url, link.description, link.note, (link.tags || []).join(' ')].filter(Boolean).join(' ').toLowerCase();
@@ -22,6 +33,7 @@ export const matchesFilters = (link: LinkItem, parsed: ParsedQuery, categories: 
 };
 export const matchesQuery = (link: LinkItem, query: string) => {
   const value = query.trim().toLowerCase(); if (!value) return true; if (getLinkSearchText(link).includes(value)) return true;
+  const pinyin = pinyinFn; if (!pinyin) return false;
   try { return pinyin(link.title, { toneType: 'none', type: 'array' }).join('').toLowerCase().includes(value) || pinyin(link.title, { pattern: 'first', toneType: 'none', type: 'array' }).join('').toLowerCase().includes(value); } catch { return false; }
 };
 export const sortByRelevance = (links: LinkItem[], query: string) => [...links].sort((a, b) => Number(b.title.toLowerCase().includes(query.toLowerCase())) - Number(a.title.toLowerCase().includes(query.toLowerCase())) || (b.visitCount || 0) - (a.visitCount || 0));

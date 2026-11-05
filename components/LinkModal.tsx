@@ -4,6 +4,7 @@ import { X, Sparkles, Loader2, Pin, Wand2, Trash2, AlertTriangle } from 'lucide-
 import { LinkItem, Category, AIConfig } from '../types';
 import { generateLinkDescription, suggestCategory } from '../services/geminiService';
 import { findDuplicatesOfUrl } from '../services/duplicateService';
+import { faviconProxyUrl } from '../services/favicon';
 
 interface LinkModalProps {
   isOpen: boolean;
@@ -113,32 +114,6 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     onClose();
   };
 
-  // 缓存自定义图标到KV空间
-  const cacheCustomIcon = async (url: string, iconUrl: string) => {
-    try {
-      // 提取域名
-      let domain = url;
-      if (domain.startsWith('http://') || domain.startsWith('https://')) {
-        const urlObj = new URL(domain);
-        domain = urlObj.hostname;
-      }
-      
-      // 将自定义图标保存到KV缓存
-      await fetch('/api/storage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          saveConfig: 'favicon',
-          domain: domain,
-          icon: iconUrl
-        })
-      });
-      console.log(`Custom icon cached for domain: ${domain}`);
-    } catch (error) {
-      console.log("Failed to cache custom icon", error);
-    }
-  };
-
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -172,12 +147,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       pinned,
       tags
     });
-    
-    // 如果有自定义图标URL，缓存到KV空间
-    if (icon && !icon.includes('faviconextractor.com')) {
-      cacheCustomIcon(finalUrl, icon);
-    }
-    
+
+
     // 批量模式下不关闭窗口，只显示成功提示
     if (batchMode) {
       setShowSuccessMessage(true);
@@ -225,60 +196,14 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     }
   };
 
-  const handleFetchIcon = async () => {
+  /** 图标与卡片、Dock 一致，统一走同源的边缘代理；地址可由 URL 直接推导，无需缓存。 */
+  const handleFetchIcon = () => {
     if (!url) return;
-    
     setIsFetchingIcon(true);
     try {
-      // 提取域名
-      let domain = url;
-      // 如果URL没有协议前缀，添加https://作为默认协议
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        domain = 'https://' + url;
-      }
-      
-      if (domain.startsWith('http://') || domain.startsWith('https://')) {
-        const urlObj = new URL(domain);
-        domain = urlObj.hostname;
-      }
-      
-      // 先尝试从 KV 缓存获取图标；旧版本缓存过 faviconextractor / s2/favicons
-      // 的地址，这些服务不稳定，命中时判定失效并重新生成。
-      try {
-        const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}`);
-        if (response.ok) {
-          const data = await response.json();
-          const cachedIcon = typeof data?.icon === 'string' ? data.icon : '';
-          const isStale = /faviconextractor|google\.com\/s2\/favicons|t3\.gstatic\.com/i.test(cachedIcon);
-          if (data.cached && cachedIcon && !isStale) {
-            setIcon(cachedIcon);
-            setIsFetchingIcon(false);
-            return;
-          }
-        }
-      } catch { /* 缓存读不到就直接走生成 */ }
-
-      // 与卡片、Dock 完全一致：走自家边缘代理取图。
-      // 浏览器不直连 Google —— 项目在 Cloudflare 上，用户在国内访问不到 gstatic。
-      const iconUrl = `/api/favicon?url=${encodeURIComponent(`https://${domain}`)}`;
-      setIcon(iconUrl);
-      
-      // 将图标保存到KV缓存
-      try {
-        await fetch('/api/storage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            saveConfig: 'favicon',
-            domain: domain,
-            icon: iconUrl
-          })
-        });
-      } catch (error) {
-        console.log("Failed to cache icon", error);
-      }
-    } catch (e) {
-      console.error("Failed to fetch icon", e);
+      const { origin } = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+      setIcon(faviconProxyUrl(origin));
+    } catch {
       alert("无法获取图标，请检查URL是否正确");
     } finally {
       setIsFetchingIcon(false);

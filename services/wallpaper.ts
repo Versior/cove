@@ -69,13 +69,13 @@ const PRESET_GRADIENTS: Record<Exclude<WallpaperPreset, 'custom'>, { light: stri
   },
 };
 
-export const normalizeWallpaperPreset = (value: unknown): WallpaperPreset =>
+const normalizeWallpaperPreset = (value: unknown): WallpaperPreset =>
   value === 'ventura' || value === 'monterey' || value === 'graphite' || value === 'custom'
     ? value
     : 'sonoma';
 
 /** 壁纸暗化：0 = 不暗化，100 = 全黑。默认给一点，保证文字清晰。 */
-export const normalizeWallpaperDim = (value: unknown): number => {
+const normalizeWallpaperDim = (value: unknown): number => {
   const n = Number(value);
   if (!Number.isFinite(n)) return 12;
   return Math.max(0, Math.min(80, Math.round(n)));

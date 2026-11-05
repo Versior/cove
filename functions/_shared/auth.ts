@@ -1,6 +1,6 @@
 interface SessionPayload {
   exp: number;
-  scope?: 'session' | 'extension';
+  scope?: 'session';
 }
 
 export interface AuthEnv {
@@ -8,33 +8,8 @@ export interface AuthEnv {
   SESSION_SECRET?: string;
 }
 
-const COOKIE_NAME = 'cloudnav_session';
+const COOKIE_NAME = 'cove_session';
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const EXTENSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-
-/**
- * 同源优先：只有同源请求才回显 Origin。
- * 扩展通过 Authorization 头访问，不依赖 Access-Control-Allow-Origin 通配。
- */
-export const corsHeaders = {
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Max-Age': '86400',
-};
-
-export const buildCorsHeaders = (request?: Request) => {
-  const origin = request?.headers.get('Origin') || '';
-  if (!origin) return { ...corsHeaders };
-  try {
-    const requestUrl = new URL(request!.url);
-    if (new URL(origin).host === requestUrl.host) {
-      return { ...corsHeaders, 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
-    }
-  } catch {
-    // 非法 Origin 直接不回显
-  }
-  return { ...corsHeaders };
-};
 
 const encoder = new TextEncoder();
 
@@ -89,7 +64,7 @@ const getCookie = (request: Request, name: string) => {
   return match ? decodeURIComponent(match.slice(prefix.length)) : '';
 };
 
-const verifyToken = async (token: string, env: AuthEnv, scope?: SessionPayload['scope']) => {
+const verifyToken = async (token: string, env: AuthEnv, scope: SessionPayload['scope']) => {
   const [payload, signature] = token.split('.');
   if (!payload || !signature) return false;
 
@@ -99,24 +74,19 @@ const verifyToken = async (token: string, env: AuthEnv, scope?: SessionPayload['
   try {
     const decoded = JSON.parse(base64UrlDecodeString(payload)) as SessionPayload;
     if (typeof decoded.exp !== 'number' || decoded.exp <= Math.floor(Date.now() / 1000)) return false;
-    return scope ? decoded.scope === scope : true;
+    return decoded.scope === scope;
   } catch {
     return false;
   }
 };
 
-export const jsonResponse = (body: unknown, init: ResponseInit = {}, request?: Request) => new Response(JSON.stringify(body), {
+/** 前端与 API 同源部署，不需要 CORS 头，也不需要处理 OPTIONS 预检。 */
+export const jsonResponse = (body: unknown, init: ResponseInit = {}) => new Response(JSON.stringify(body), {
   ...init,
   headers: {
     'Content-Type': 'application/json',
-    ...buildCorsHeaders(request),
     ...(init.headers || {}),
   },
-});
-
-export const optionsResponse = (request?: Request) => new Response(null, {
-  status: 204,
-  headers: buildCorsHeaders(request),
 });
 
 export const createSessionCookie = async (env: AuthEnv) => {
@@ -129,26 +99,10 @@ export const createSessionCookie = async (env: AuthEnv) => {
   return `${COOKIE_NAME}=${encodedPayload}.${signature}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
 };
 
-export const createExtensionToken = async (env: AuthEnv) => {
-  const payload: SessionPayload = {
-    exp: Math.floor(Date.now() / 1000) + EXTENSION_TTL_SECONDS,
-    scope: 'extension',
-  };
-  const encodedPayload = base64UrlEncodeString(JSON.stringify(payload));
-  const signature = await sign(encodedPayload, env);
-  return `${encodedPayload}.${signature}`;
-};
-
 export const clearSessionCookie = () => `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 
 export const isAuthenticated = async (request: Request, env: AuthEnv) => {
   if (!env.PASSWORD) return false;
-
-  const authorization = request.headers.get('Authorization') || '';
-  if (authorization.startsWith('Bearer ')) {
-    return verifyToken(authorization.slice('Bearer '.length), env, 'extension');
-  }
-
   const token = getCookie(request, COOKIE_NAME);
   return token ? verifyToken(token, env, 'session') : false;
 };

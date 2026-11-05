@@ -1,32 +1,12 @@
 import React, { useState } from 'react';
-import * as LucideIcons from 'lucide-react';
-import { X, Search, ExternalLink } from 'lucide-react';
-import Icon from './Icon';
+import { Search, ExternalLink } from 'lucide-react';
+import Icon, { COMMON_ICON_NAMES, loadAllIcons } from './Icon';
 
 interface IconSelectorProps {
   onSelectIcon: (iconName: string) => void;
 }
 
-// 常用图标列表，可以根据需要扩展
-const commonIcons = [
-  'Star', 'Heart', 'Bookmark', 'Flag', 'Tag', 'Hash',
-  'Home', 'User', 'Users', 'Settings', 'Bell', 'Mail',
-  'Calendar', 'Clock', 'MapPin', 'Phone', 'Camera', 'Image',
-  'Folder', 'File', 'Archive', 'Trash2', 'Download', 'Upload',
-  'Search', 'Filter', 'Menu', 'MoreVertical', 'ChevronDown', 'ChevronUp',
-  'Plus', 'Minus', 'X', 'Check', 'AlertCircle', 'Info',
-  'Edit', 'Copy', 'Share', 'Link', 'ExternalLink', 'Lock',
-  'Code', 'Terminal', 'Database', 'Server', 'Cloud', 'Wifi',
-  'ShoppingCart', 'CreditCard', 'Package', 'Truck', 'Store',
-  'Music', 'Play', 'Pause', 'Volume2', 'Headphones', 'Mic',
-  'Book', 'BookOpen', 'FileText', 'PenTool', 'Highlighter', 'Type',
-  'Layout', 'Grid', 'List', 'Columns', 'Sidebar', 'Layers',
-  'Circle', 'Square', 'Triangle', 'Hexagon', 'Zap', 'Target',
-  'Rocket', 'Plane', 'Car', 'Bike', 'Ship', 'Train',
-  'Moon', 'Sun', 'CloudRain', 'CloudSnow', 'Wind', 'Thermometer',
-  'Github', 'Gitlab', 'Chrome', 'Firefox', 'Safari', 'Edge',
-  'MessageSquare', 'MessageCircle', 'Send', 'AtSign', 'Percent'
-];
+const commonIcons = COMMON_ICON_NAMES;
 
 const IconSelector: React.FC<IconSelectorProps> = ({ 
   onSelectIcon
@@ -36,10 +16,6 @@ const IconSelector: React.FC<IconSelectorProps> = ({
   const [customIconName, setCustomIconName] = useState('');
   const [isValidIcon, setIsValidIcon] = useState(true);
 
-  // 获取当前目标图标
-  const getCurrentIcon = () => {
-    return selectedIcon;
-  };
 
   // 过滤图标
   const filteredIcons = commonIcons.filter(icon => 
@@ -54,30 +30,11 @@ const IconSelector: React.FC<IconSelectorProps> = ({
       .join('');
   };
 
-  // 验证图标名称是否有效
-  const validateIconName = (iconName: string): boolean => {
-    if (!iconName.trim()) return false;
-    
-    // 检查是否是常用图标列表中的图标
-    if (commonIcons.includes(iconName)) return true;
-    
-    // 检查是否是 Lucide 图标库中的图标
-    try {
-      // 首先尝试直接匹配
-      if (iconName in LucideIcons) return true;
-      
-      // 如果包含连字符，尝试转换为 PascalCase
-      if (iconName.includes('-')) {
-        const pascalName = kebabToPascal(iconName);
-        return pascalName in LucideIcons;
-      }
-      
-      // 尝试首字母大写
-      const capitalizedName = iconName.charAt(0).toUpperCase() + iconName.slice(1);
-      return capitalizedName in LucideIcons;
-    } catch {
-      return false;
-    }
+  // 把用户输入（star / cloud-rain / CloudRain）转成 lucide 的导出名
+  const toIconName = (iconName: string): string => {
+    const trimmed = iconName.trim();
+    if (trimmed.includes('-')) return kebabToPascal(trimmed);
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   };
 
   const handleSelect = (iconName: string) => {
@@ -86,26 +43,18 @@ const IconSelector: React.FC<IconSelectorProps> = ({
     setIsValidIcon(true);
   };
 
-  const handleCustomIconChange = (iconName: string) => {
+  const handleCustomIconChange = async (iconName: string) => {
     setCustomIconName(iconName);
-    
-    if (iconName.trim()) {
-      const isValid = validateIconName(iconName);
-      setIsValidIcon(isValid);
-      if (isValid) {
-        // 转换为正确的图标名称格式
-        let finalIconName = iconName;
-        if (iconName.includes('-')) {
-          finalIconName = kebabToPascal(iconName);
-        } else if (!commonIcons.includes(iconName)) {
-          // 如果不是常用图标，尝试首字母大写
-          finalIconName = iconName.charAt(0).toUpperCase() + iconName.slice(1);
-        }
-        setSelectedIcon(finalIconName);
-      }
-    } else {
+    if (!iconName.trim()) {
       setIsValidIcon(true);
+      return;
     }
+    // 非常用图标需要完整图标集才能校验，首次输入时懒加载
+    const finalIconName = toIconName(iconName);
+    const allIcons = commonIcons.includes(finalIconName) ? null : await loadAllIcons();
+    const isValid = !allIcons || finalIconName in allIcons;
+    setIsValidIcon(isValid);
+    if (isValid) setSelectedIcon(finalIconName);
   };
 
   const handleConfirm = () => {
@@ -149,7 +98,7 @@ const IconSelector: React.FC<IconSelectorProps> = ({
               type="text"
               placeholder="例如: star, heart, cloud..."
               value={customIconName}
-              onChange={(e) => handleCustomIconChange(e.target.value)}
+              onChange={(e) => void handleCustomIconChange(e.target.value)}
               className={`w-full px-3 py-2 rounded-lg border ${
                 customIconName && !isValidIcon 
                   ? 'border-red-300 dark:border-red-700' 

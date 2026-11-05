@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Lock, ArrowRight, Loader2, X } from 'lucide-react';
+import { Lock, ArrowRight, X } from 'lucide-react';
 import { useModalA11y } from './useModalA11y';
 import { Category } from '../types';
 

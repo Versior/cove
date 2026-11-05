@@ -1,18 +1,10 @@
 import type { Category, LinkItem } from '../types.ts';
 
-/**
- * 已废弃的分类：规范化时连同其下链接一并移除。
- * - sub-search / sub-news：早期「搜索引擎」「即时资讯」
- * - dev / design / ent / ai：早期默认示例分类，仅含示例站点
- */
-export const RETIRED_CATEGORY_IDS = ['sub-search', 'sub-news', 'dev', 'design', 'ent', 'ai'];
-
-export const normalizeCategories = (value: unknown): Category[] => {
+const normalizeCategories = (value: unknown): Category[] => {
   const source = Array.isArray(value) ? value : [];
   const seen = new Set<string>();
   const categories = source
     .filter((item): item is Category => !!item && typeof item === 'object' && typeof (item as Category).id === 'string' && typeof (item as Category).name === 'string')
-    .filter(category => !RETIRED_CATEGORY_IDS.includes(category.id))
     .filter(category => {
       if (seen.has(category.id)) return false;
       seen.add(category.id);
@@ -22,13 +14,12 @@ export const normalizeCategories = (value: unknown): Category[] => {
   return categories;
 };
 
-export const normalizeLinks = (value: unknown, categories: Category[] = []): LinkItem[] => {
+const normalizeLinks = (value: unknown, categories: Category[] = []): LinkItem[] => {
   const categoryIds = new Set(categories.map(category => category.id));
   const seen = new Set<string>();
   return (Array.isArray(value) ? value : [])
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     .filter(item => typeof item.id === 'string' && typeof item.title === 'string' && typeof item.url === 'string')
-    .filter(item => !RETIRED_CATEGORY_IDS.includes(String(item.categoryId)))
     .filter(item => {
       const id = String(item.id);
       if (seen.has(id)) return false;
@@ -36,10 +27,8 @@ export const normalizeLinks = (value: unknown, categories: Category[] = []): Lin
       return true;
     })
     .map(item => {
-      const { credentials: _credentials, health: _health, ...rest } = item;
-      const rawCategoryId = String(rest.categoryId || 'common');
-      const categoryId = rawCategoryId === '__inbox__' || !categoryIds.has(rawCategoryId) ? 'common' : rawCategoryId;
-      return { ...rest, categoryId } as LinkItem;
+      const categoryId = String(item.categoryId || 'common');
+      return { ...item, categoryId: categoryIds.has(categoryId) ? categoryId : 'common' } as LinkItem;
     });
 };
 

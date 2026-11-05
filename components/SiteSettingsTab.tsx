@@ -173,19 +173,6 @@ const SiteSettingsTab: React.FC<SiteSettingsTabProps> = ({ value, onChange }) =>
  <p className="mt-1 text-xs text-ink-soft">调高会让壁纸更淡，文字更清晰</p>
  </div>
  </div>
- <div>
- <label className="block text-sm font-medium text-ink mb-1">身份验证过期天数</label>
- <div className="relative">
- <input
- type="number"
- min="0"
- value={value.passwordExpiryDays}
- onChange={(e) => onChange('passwordExpiryDays', parseInt(e.target.value) || 0)}
- className="w-full p-2 rounded-lg border border-line-strong dark:text-white outline-none focus:ring-2 focus:ring-accent"
- />
- </div>
- <p className="text-xs text-ink-soft mt-1">设置为 0 表示永久不退出，默认 7 天后自动退出</p>
- </div>
  </div>
  </div>
  );

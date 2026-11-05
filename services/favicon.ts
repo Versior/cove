@@ -1,42 +1,36 @@
 import React from 'react';
+import type { LinkItem } from '../types';
+
+/** 同源图标代理地址：由 Cloudflare 边缘抓图，浏览器不直连外站。 */
+export const faviconProxyUrl = (origin: string) => `/api/favicon?url=${encodeURIComponent(origin)}`;
 
 /**
- * favicon 候选地址。顺序是这个文件里最重要的东西。
- *
- * **代理优先**，不是直连优先：
- * 1. 直连站点图标会被 Chrome 的 ORB（Opaque Response Blocking）拦掉——
- *    跨域 + 无 CORS 头 + no-referrer 的图片资源会被直接判定为
- *    ERR_BLOCKED_BY_ORB / ERR_BLOCKED_BY_RESPONSE.NotSameOrigin。
- *    实测线上 140 个图标请求里有 27 个就是这么死掉的，重试多少次都不会好。
- * 2. /api/favicon 是同源请求，不受 ORB 影响，且由 Cloudflare 边缘去抓，
- *    可达性不依赖用户本地网络。
- *
- * 实测同一批被 ORB 拦掉的域名：直连 4/12 成功，走代理 8/12 成功。
- * 全量抽测 60 个域名，代理成功 48 个。所以代理放前面，直连作为后备。
+ * favicon 候选地址，**代理优先**：
+ * 直连站点图标常被 Chrome 的 ORB（Opaque Response Blocking）拦掉，
+ * 而 /api/favicon 是同源请求，不受 ORB 影响。直连只作为后备。
  */
-export const faviconCandidates = (url: string): string[] => {
+const faviconCandidates = (url: string): string[] => {
   try {
     const { origin } = new URL(url);
-    return [
-      `/api/favicon?url=${encodeURIComponent(origin)}`,
-      `${origin}/favicon.ico`,
-      `${origin}/apple-touch-icon.png`,
-    ];
+    return [faviconProxyUrl(origin), `${origin}/favicon.ico`, `${origin}/apple-touch-icon.png`];
   } catch {
     return [];
   }
 };
 
+/**
+ * 某条书签的候选列表：自定义图标排最前，去重。
+ * 「获取图标」按钮写入的也是代理地址，不去重的话失败时会对同一张图探测两次。
+ */
+export const linkIconCandidates = (link: Pick<LinkItem, 'icon' | 'url'>): string[] =>
+  Array.from(new Set([link.icon, ...faviconCandidates(link.url)].filter((value): value is string => !!value)));
+
 /** 单张图探测的超时。代理要在边缘现场抓图，冷启动实测 1–3s。 */
 const PROBE_TIMEOUT = 5000;
 
 /**
- * 全局并发闸门。
- *
- * 这是整个文件的关键。首屏有 50 张卡片、每张 3 个候选地址，
- * 如果全部同时发出去就是 150 个请求：浏览器对同域只有 6 条连接，
- * 跨域各站排队，结果是全都挤到超时，实测只成功 3/50。
- * 限制到 8 个并发后，请求排队但每个都能在超时内完成。
+ * 全局并发闸门：首屏几十张卡片、每张多个候选，全部同时发出会互相挤到超时。
+ * 限制并发后请求排队，但每个都能在超时内完成。
  */
 const MAX_CONCURRENT = 8;
 let inFlight = 0;
@@ -88,47 +82,46 @@ const probe = async (src: string): Promise<string | null> => {
 };
 
 /**
+ * 按候选列表解析结果，全局共享。
+ * 同一条书签会同时出现在置顶区、主网格和 Dock 里，共享后只探测一次。
+ */
+const resolved = new Map<string, Promise<string>>();
+
+const resolveCandidates = (key: string): Promise<string> => {
+  const existing = resolved.get(key);
+  if (existing) return existing;
+  const task = (async () => {
+    for (const candidate of key.split('|')) {
+      const hit = await probe(candidate);
+      if (hit) return hit;
+    }
+    return '';
+  })();
+  resolved.set(key, task);
+  return task;
+};
+
+/**
  * 图标解析结果：null 表示还在探测，'' 表示全部失败（走首字母兜底）。
+ * 候选按优先级串行探测，第一个成功即止。
  */
 export const useFaviconSrc = (candidates: string[]): string | null => {
-  const [src, setSrc] = React.useState<string | null>(() => (candidates.length ? null : ''));
   // 用字符串做依赖，避免每次渲染新建的数组触发无限重跑
   const key = candidates.join('|');
+  const [state, setState] = React.useState<{ key: string; src: string | null }>(() => ({ key, src: key ? null : '' }));
 
   React.useEffect(() => {
-    const list = key ? key.split('|') : [];
-    if (list.length === 0) {
-      setSrc('');
+    if (!key) {
+      setState({ key, src: '' });
       return;
     }
-
     let alive = true;
-    setSrc(null);
-
-    /*
-     * 按优先级 probe，第一个成功即止，但每个候选都要过并发闸门，
-     * 所以这里逐个 await：拿到结果再决定要不要试下一个。
-     *
-     * 为什么不是全部同时发：并发闸门只有 8 个位，一张卡占满 3 个位
-     * 会挤掉其它卡片；串行能让每张卡至少推进一个候选。
-     */
-    const run = async () => {
-      for (const candidate of list) {
-        if (!alive) return;
-        const hit = await probe(candidate);
-        if (!alive) return;
-        if (hit) {
-          setSrc(hit);
-          return;
-        }
-      }
-      if (alive) setSrc('');
-    };
-
-    void run();
-
+    setState(current => (current.key === key ? current : { key, src: null }));
+    void resolveCandidates(key).then(src => {
+      if (alive) setState({ key, src });
+    });
     return () => { alive = false; };
   }, [key]);
 
-  return src;
+  return state.key === key ? state.src : null;
 };

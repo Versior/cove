@@ -2,7 +2,7 @@ import React from 'react';
 import type { Density, LinkItem } from '../types';
 import { DENSITY_TOKENS } from '../services/density';
 import { iconGradient, initialOf, paletteOf } from '../services/iconPalette';
-import { faviconCandidates, useFaviconSrc } from '../services/favicon';
+import { linkIconCandidates, useFaviconSrc } from '../services/favicon';
 /**
  * macOS 底部 Dock / 启动台。
  *
@@ -18,7 +18,6 @@ interface LaunchpadProps {
   /** 最多显示几个 */
   limit?: number;
   onOpen: (link: LinkItem) => void;
-  onEdit: (link: LinkItem) => void;
   onContextMenu: (event: React.MouseEvent, link: LinkItem) => void;
 }
 
@@ -37,11 +36,7 @@ const hostOf = (url: string) => {
  * 这里按站点名生成色相，画出彩色首字母图标，每个站点都有自己的辨识度。
  */
 const DockIcon: React.FC<{ link: LinkItem; size: string }> = ({ link, size }) => {
-  const candidates = React.useMemo(() => {
-    const list = faviconCandidates(link.url);
-    return link.icon ? [link.icon, ...list] : list;
-  }, [link.icon, link.url]);
-  const src = useFaviconSrc(candidates);
+  const src = useFaviconSrc(linkIconCandidates(link));
 
   const label = (link.title || hostOf(link.url) || '?').trim();
   const letter = initialOf(label);
@@ -74,7 +69,7 @@ const DockIcon: React.FC<{ link: LinkItem; size: string }> = ({ link, size }) =>
 };
 
 const Launchpad: React.FC<LaunchpadProps> = ({
-  links, density = 'cozy', limit = 12, onOpen, onEdit, onContextMenu,
+  links, density = 'cozy', limit = 12, onOpen, onContextMenu,
 }) => {
   const tokens = DENSITY_TOKENS[density];
   if (!links.length) return null;

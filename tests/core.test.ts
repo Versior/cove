@@ -3,6 +3,7 @@ import test from 'node:test';
 import { normalizeAppData } from '../services/dataNormalization.ts';
 import { normalizeOpenAIEndpoint } from '../services/openaiEndpoint.ts';
 import { isBlockedHost } from '../functions/_shared/hostGuard.ts';
+import { mergeImportedStructure } from '../services/importMerge.ts';
 import {
   LATEST_BACKUP_KEY,
   normalizeData,
@@ -10,22 +11,14 @@ import {
   writeLatestBackup,
 } from '../functions/_shared/dataStore.ts';
 
-test('normalizes legacy links without losing ordinary fields', () => {
+test('normalizes links: dedupes, drops invalid, and moves orphans to common', () => {
   const data = normalizeAppData({
     categories: [
       { id: 'tools', name: '工具', icon: 'Wrench' },
       { id: 'tools', name: '重复分类' },
     ],
     links: [
-      {
-        id: '1',
-        title: 'Example',
-        url: 'https://example.com',
-        categoryId: '__inbox__',
-        note: 'keep me',
-        credentials: { username: 'drop' },
-        health: { status: 'broken' },
-      },
+      { id: '1', title: 'Example', url: 'https://example.com', categoryId: 'missing', note: 'keep me' },
       { id: '1', title: 'duplicate', url: 'https://duplicate.example' },
       { id: 'invalid', title: 'missing url' },
     ],
@@ -37,8 +30,6 @@ test('normalizes legacy links without losing ordinary fields', () => {
   assert.equal(data.links.length, 1);
   assert.equal(data.links[0].categoryId, 'common');
   assert.equal(data.links[0].note, 'keep me');
-  assert.equal('credentials' in data.links[0], false);
-  assert.equal('health' in data.links[0], false);
 });
 
 test('normalizes OpenAI-compatible endpoints and rejects webpage URLs', () => {
@@ -54,33 +45,43 @@ test('normalizes OpenAI-compatible endpoints and rejects webpage URLs', () => {
   assert.throws(() => normalizeOpenAIEndpoint(''), /不能为空/);
 });
 
-test('drops retired categories together with their links', () => {
+test('keeps categories whose ids match old CloudNav defaults, with their links', () => {
   const data = normalizeAppData({
     categories: [
       { id: 'common', name: '常用推荐', icon: 'Star' },
-      { id: 'sub-search', name: '搜索引擎', icon: 'Search', parentId: 'common' },
-      { id: 'sub-news', name: '即时资讯', icon: 'Newspaper', parentId: 'common' },
       { id: 'dev', name: '开发工具', icon: 'Code' },
-      { id: 'design', name: '设计资源', icon: 'Palette' },
-      { id: 'ent', name: '休闲娱乐', icon: 'Gamepad2' },
       { id: 'ai', name: '人工智能', icon: 'Bot' },
-      { id: 'mine', name: '我自建的分类', icon: 'Folder' },
     ],
     links: [
-      { id: 'a', title: 'Google', url: 'https://google.com', categoryId: 'sub-search' },
-      { id: 'b', title: '百度', url: 'https://baidu.com', categoryId: 'sub-search' },
-      { id: 'c', title: 'IT之家', url: 'https://ithome.com', categoryId: 'sub-news' },
       { id: 'd', title: 'GitHub', url: 'https://github.com', categoryId: 'dev' },
-      { id: 'e', title: 'Dribbble', url: 'https://dribbble.com', categoryId: 'design' },
-      { id: 'f', title: 'Steam', url: 'https://store.steampowered.com', categoryId: 'ent' },
       { id: 'g', title: 'ChatGPT', url: 'https://chat.openai.com', categoryId: 'ai' },
-      { id: 'h', title: '我的书签', url: 'https://example.com', categoryId: 'mine' },
     ],
   });
 
-  // 旧默认示例分类连同链接一起清掉，用户自建分类与链接保留
-  assert.deepEqual(data.categories.map(category => category.id), ['common', 'mine']);
-  assert.deepEqual(data.links.map(link => link.id), ['h']);
+  // 导入旧备份时不能静默删掉用户的分类和链接
+  assert.deepEqual(data.categories.map(category => category.id), ['common', 'dev', 'ai']);
+  assert.deepEqual(data.links.map(link => link.categoryId), ['dev', 'ai']);
+});
+
+test('import merges folders by name instead of dumping them into common', () => {
+  const existing = [
+    { id: 'common', name: '常用推荐', icon: 'Star' },
+    { id: 'tools-existing', name: '工具', icon: 'Wrench' },
+  ];
+  const imported = [
+    { id: 'tools-new', name: '工具', icon: 'Folder' },
+    { id: 'read-new', name: '阅读', icon: 'Folder' },
+  ];
+  const links = [
+    { id: '1', title: 'A', url: 'https://a.example', categoryId: 'tools-new', createdAt: 1 },
+    { id: '2', title: 'B', url: 'https://b.example', categoryId: 'read-new', createdAt: 1 },
+    { id: '3', title: 'C', url: 'https://c.example', categoryId: 'common', createdAt: 1 },
+  ];
+
+  const merged = mergeImportedStructure(links, imported, existing);
+
+  assert.deepEqual(merged.categories.map(category => category.id), ['read-new']);
+  assert.deepEqual(merged.links.map(link => link.categoryId), ['tools-existing', 'read-new', 'common']);
 });
 
 class MemoryKv {
@@ -130,7 +131,7 @@ class MemoryR2 {
 
 test('persists versions, detects conflicts, and skips unchanged content', async () => {
   const kv = new MemoryKv();
-  const env = { NAVIX_KV: kv };
+  const env = { COVE_KV: kv };
   const initial = { links: [], categories: [] };
   const first = await persistData(env, initial, 0);
   assert.equal(first.conflict, false);
@@ -154,7 +155,7 @@ test('persists versions, detects conflicts, and skips unchanged content', async 
 test('writes only the fixed latest R2 object and skips the same hash', async () => {
   const kv = new MemoryKv();
   const r2 = new MemoryR2();
-  const env = { NAVIX_KV: kv, NAVIX_BACKUPS: r2 };
+  const env = { COVE_KV: kv, COVE_BACKUPS: r2 };
   const data = normalizeData({ links: [], categories: [] });
 
   const first = await writeLatestBackup(env, data, 'same-hash');
@@ -170,7 +171,7 @@ test('writes only the fixed latest R2 object and skips the same hash', async () 
 test('does not let an older backup overwrite a newer stored version', async () => {
   const kv = new MemoryKv();
   const r2 = new MemoryR2();
-  const env = { NAVIX_KV: kv, NAVIX_BACKUPS: r2 };
+  const env = { COVE_KV: kv, COVE_BACKUPS: r2 };
   await kv.put('app_data', JSON.stringify({ links: [], categories: [], version: 3 }));
 
   const result = await writeLatestBackup(env, normalizeData({ links: [], categories: [] }), 'old-hash');
@@ -184,7 +185,7 @@ test('blocks private and loopback hosts while allowing public hosts', () => {
     'localhost', 'api.localhost', 'nas.local', 'metadata.internal',
     '127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1',
     '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '2130706433',
-    '::1', '::', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1',
+    '::1', '::', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:a00:1',
   ];
   for (const host of blocked) {
     assert.equal(isBlockedHost(host), true, `${host} should be blocked`);
@@ -216,4 +217,10 @@ test('reorders by order field and keeps the drag result visible', async () => {
     applySort(next, { key: 'manual', direction: 'asc' }).map(link => link.id),
     ['b', 'c', 'a'],
   );
+});
+
+test('refuses to treat corrupted KV data as an empty dataset', async () => {
+  const kv = new MemoryKv();
+  await kv.put('app_data', '{not json');
+  await assert.rejects(() => persistData({ COVE_KV: kv }, { links: [], categories: [] }, 0), /损坏/);
 });

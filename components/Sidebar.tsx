@@ -3,7 +3,6 @@ import { useDroppable } from '@dnd-kit/core';
 import { LayoutGrid, Lock, Plus, Pin, Settings, X } from 'lucide-react';
 import type { Category, Density } from '../types';
 import { DENSITY_TOKENS } from '../services/density';
-import Icon from './Icon';
 
 interface SidebarProps {
   navTitle: string;
@@ -23,11 +22,6 @@ interface SidebarProps {
   onCreateCategory: () => void;
   onOpenSettings: () => void;
 }
-
-/** 分类图标：复用统一 Icon 组件，未设置图标时退回文件夹。 */
-const IconSlot: React.FC<{ name?: string; active: boolean; size: number }> = ({ name, active, size }) => (
-  <Icon name={name || 'Folder'} size={size} className={active ? 'shrink-0' : 'shrink-0 opacity-70'} />
-);
 
 /**
  * macOS 风格文件夹图标：双层梯形，蓝色渐变。
@@ -83,13 +77,12 @@ const DroppableCategory: React.FC<{
   label: string;
   active: boolean;
   depth: number;
-  icon?: string;
   locked?: boolean;
   countText: string;
   density: Density;
   onClick: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-}> = ({ id, label, active, depth, icon, locked, countText, density, onClick, onContextMenu }) => {
+}> = ({ id, label, active, depth, locked, countText, density, onClick, onContextMenu }) => {
   const tokens = DENSITY_TOKENS[density];
   const { setNodeRef, isOver } = useDroppable({ id: `cat:${id}` });
   return (
@@ -134,7 +127,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         label={category.name}
         active={selectedCategory === category.id}
         depth={depth}
-        icon={category.icon}
         locked={!!category.password}
         countText={counts[category.id] ? String(counts[category.id]) : ''}
         density={density}

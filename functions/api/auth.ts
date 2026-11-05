@@ -1,4 +1,4 @@
-import { clearSessionCookie, createExtensionToken, createSessionCookie, isAuthenticated, jsonResponse, optionsResponse, verifyPassword } from '../_shared/auth';
+import { clearSessionCookie, createSessionCookie, isAuthenticated, jsonResponse, verifyPassword } from '../_shared/auth';
 
 interface Env {
   PASSWORD: string;
@@ -28,15 +28,12 @@ const hitLimit = (key: string) => {
 
 const clearLimit = (key: string) => attempts.delete(key);
 
-export const onRequestOptions = async (context: { request: Request }) => optionsResponse(context.request);
-
 export const onRequestGet = async (context: { request: Request; env: Env }) => {
   const authenticated = await isAuthenticated(context.request, context.env);
   return jsonResponse({
     authenticated,
     requiresAuth: !!context.env.PASSWORD,
-    extensionToken: authenticated ? await createExtensionToken(context.env) : '',
-  }, {}, context.request);
+  });
 };
 
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
@@ -48,23 +45,23 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     if (body.action === 'logout') {
       return jsonResponse({ success: true }, {
         headers: { 'Set-Cookie': clearSessionCookie() },
-      }, request);
+      });
     }
 
     const key = clientKey(request);
     if (hitLimit(key)) {
-      return jsonResponse({ error: '尝试次数过多，请稍后再试' }, { status: 429 }, request);
+      return jsonResponse({ error: '尝试次数过多，请稍后再试' }, { status: 429 });
     }
 
     if (!verifyPassword(body.password || '', env)) {
-      return jsonResponse({ error: 'Unauthorized' }, { status: 401 }, request);
+      return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
     }
 
     clearLimit(key);
-    return jsonResponse({ success: true, extensionToken: await createExtensionToken(env) }, {
+    return jsonResponse({ success: true }, {
       headers: { 'Set-Cookie': await createSessionCookie(env) },
-    }, request);
+    });
   } catch {
-    return jsonResponse({ error: 'Invalid request' }, { status: 400 }, request);
+    return jsonResponse({ error: 'Invalid request' }, { status: 400 });
   }
 };

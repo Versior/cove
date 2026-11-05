@@ -1,9 +1,9 @@
 import React from 'react';
-import { Check, Edit2, GripHorizontal, GripVertical, Pin } from 'lucide-react';
+import { Check, Edit2, GripVertical, Pin } from 'lucide-react';
 import type { CardStyle, Density, LinkItem } from '../types';
 import { DENSITY_TOKENS } from '../services/density';
 import { iconGradient, initialOf, paletteOf } from '../services/iconPalette';
-import { faviconCandidates, useFaviconSrc } from '../services/favicon';
+import { linkIconCandidates, useFaviconSrc } from '../services/favicon';
 
 interface LinkCardProps {
   link: LinkItem;
@@ -35,8 +35,8 @@ const hostOf = (url: string) => {
 /**
  * 图表底座的「小图标」版本：详情 / 简约 / 列表视图用。
  *
- * 加载优先级与桌面图标一致，都走 useFaviconSrc：并行探测候选地址，
- * 谁先成功用谁，全部失败才退回首字母。
+ * 加载优先级与桌面图标一致，都走 useFaviconSrc：按优先级探测候选地址，
+ * 第一个成功即用，全部失败才退回首字母。
  */
 const Favicon: React.FC<{ link: LinkItem; size: 'sm' | 'md'; density: Density }> = ({ link, size, density }) => {
   const tokens = DENSITY_TOKENS[density];
@@ -44,12 +44,7 @@ const Favicon: React.FC<{ link: LinkItem; size: 'sm' | 'md'; density: Density }>
   const box = size === 'md' ? tokens.iconBox : density === 'compact' ? 'h-5 w-5 rounded-md' : 'h-6 w-6 rounded-md';
   const img = size === 'md' ? (density === 'spacious' ? 'h-5 w-5' : 'h-4 w-4') : 'h-4 w-4';
 
-  const candidates = React.useMemo(() => {
-    const list = faviconCandidates(link.url);
-    return link.icon ? [link.icon, ...list] : list;
-  }, [link.icon, link.url]);
-
-  const src = useFaviconSrc(candidates);
+  const src = useFaviconSrc(linkIconCandidates(link));
 
   if (!src) {
     // 与桌面图标共用同一套色板，保证同一个站点在任何视图里都是同一个颜色。
@@ -83,11 +78,7 @@ const Favicon: React.FC<{ link: LinkItem; size: 'sm' | 'md'; density: Density }>
  */
 const LaunchIcon: React.FC<{ link: LinkItem; density: Density }> = ({ link, density }) => {
   const tokens = DENSITY_TOKENS[density];
-  const candidates = React.useMemo(() => {
-    const list = faviconCandidates(link.url);
-    return link.icon ? [link.icon, ...list] : list;
-  }, [link.icon, link.url]);
-  const src = useFaviconSrc(candidates);
+  const src = useFaviconSrc(linkIconCandidates(link));
 
   const label = (link.title || link.url).trim();
   const initial = initialOf(label);

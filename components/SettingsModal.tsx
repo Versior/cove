@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, Cloud, CopyCheck, LayoutTemplate, Save, Wrench, X } from 'lucide-react';
+import { Bot, Cloud, CopyCheck, LayoutTemplate, Save, X } from 'lucide-react';
 import { AIConfig, Category, LinkItem, SiteSettings } from '../types';
 import { useModalA11y } from './useModalA11y';
 import BackupSettingsTab from './BackupSettingsTab';
 import SiteSettingsTab from './SiteSettingsTab';
 import AISettingsTab from './AISettingsTab';
-import ExtensionToolsTab from './ExtensionToolsTab';
 import DuplicateLinksPanel from './DuplicateLinksPanel';
+
+export type SettingsTab = 'site' | 'ai' | 'duplicates' | 'backup';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -22,15 +23,13 @@ interface SettingsModalProps {
   onEditLink?: (link: LinkItem) => void;
   onExportJson: () => void;
   onOpenImport: () => void;
+  /** 未登录时不传，备份页隐藏「从云端恢复」。 */
+  onRestoreBackup?: () => void;
   lastBackup?: { status: string; at: number } | null;
-  authToken: boolean;
-  extensionToken: string;
   initialAICategoryId?: string;
   initialAIAction?: 'rename' | 'structure';
-  initialTab?: 'site' | 'ai' | 'tools' | 'duplicates' | 'backup';
+  initialTab?: SettingsTab;
 }
-
-type SettingsTab = 'site' | 'ai' | 'tools' | 'duplicates' | 'backup';
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -46,9 +45,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   onEditLink,
   onExportJson,
   onOpenImport,
+  onRestoreBackup,
   lastBackup,
-  authToken,
-  extensionToken,
   initialAICategoryId,
   initialAIAction,
   initialTab,
@@ -71,21 +69,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setLocalConfig(current => ({ ...current, [key]: value }));
   };
 
-  const saveWebsiteConfig = async (settings: SiteSettings) => {
-    if (!authToken) return;
-    await fetch('/api/storage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ saveConfig: 'website', config: settings }),
-    }).catch(() => undefined);
-  };
-
   const handleSiteChange = (key: keyof SiteSettings, value: string | number) => {
-    setLocalSiteSettings(current => {
-      const next = { ...current, [key]: value };
-      if (key === 'passwordExpiryDays') void saveWebsiteConfig(next);
-      return next;
-    });
+    setLocalSiteSettings(current => ({ ...current, [key]: value }));
   };
 
   if (!isOpen) return null;
@@ -95,7 +80,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'backup', label: '备份与恢复', icon: Cloud },
     { id: 'ai', label: 'AI 设置', icon: Bot },
     { id: 'duplicates', label: '重复检测', icon: CopyCheck },
-    { id: 'tools', label: '扩展工具', icon: Wrench },
   ];
 
   return (
@@ -137,10 +121,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
             {activeTab === 'site' && <SiteSettingsTab value={localSiteSettings} onChange={handleSiteChange} />}
-            {activeTab === 'backup' && <BackupSettingsTab onExportJson={onExportJson} onOpenImport={onOpenImport} lastBackup={lastBackup} />}
+            {activeTab === 'backup' && <BackupSettingsTab onExportJson={onExportJson} onOpenImport={onOpenImport} onRestoreBackup={onRestoreBackup} lastBackup={lastBackup} />}
             {activeTab === 'ai' && <AISettingsTab config={localConfig} onChange={handleChange} links={links} categories={categories} onUpdateLinks={onUpdateLinks} onUpdateCategories={onUpdateCategories} onUpdateData={onUpdateData} initialCategoryId={initialAICategoryId} initialAIAction={initialAIAction} />}
             {activeTab === 'duplicates' && <DuplicateLinksPanel links={links} categories={categories} onUpdateLinks={onUpdateLinks} onEditLink={onEditLink} />}
-            {activeTab === 'tools' && <ExtensionToolsTab authToken={authToken} extensionToken={extensionToken} favicon={localSiteSettings.favicon} navTitle={localSiteSettings.navTitle} />}
           </div>
           <div className="flex shrink-0 justify-end gap-2 px-5 py-3" style={{ boxShadow: 'inset 0 0.5px 0 hsl(var(--line) / 0.8)' }}>
             <button

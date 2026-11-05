@@ -1,8 +1,9 @@
-import { Cloud, Download, FileUp } from 'lucide-react';
+import { Cloud, Download, FileUp, History } from 'lucide-react';
 
 interface BackupSettingsTabProps {
   onExportJson: () => void;
   onOpenImport: () => void;
+  onRestoreBackup?: () => void;
   lastBackup?: { status: string; at: number } | null;
 }
 
@@ -15,7 +16,7 @@ const BACKUP_LABELS: Record<string, string> = {
   unknown: '未返回状态',
 };
 
-const BackupSettingsTab: React.FC<BackupSettingsTabProps> = ({ onExportJson, onOpenImport, lastBackup }) => (
+const BackupSettingsTab: React.FC<BackupSettingsTabProps> = ({ onExportJson, onOpenImport, onRestoreBackup, lastBackup }) => (
   <div className="space-y-6 animate-in fade-in duration-300">
     <section className="space-y-3">
       <div>
@@ -37,18 +38,22 @@ const BackupSettingsTab: React.FC<BackupSettingsTabProps> = ({ onExportJson, onO
         <Cloud size={20} className="mt-0.5 shrink-0 text-blue-500" />
         <div className="space-y-2 text-sm">
           <h4 className="font-semibold text-slate-800 dark:text-white">R2 自动备份</h4>
-          <p className="text-slate-500 dark:text-slate-400">由 Cloudflare Pages Functions 在书签数据发生变化时自动处理。</p>
+          <p className="text-slate-500 dark:text-slate-400">书签数据发生变化时，由 Pages Functions 自动覆盖最新备份。</p>
           <dl className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-            <div className="flex gap-2"><dt className="font-medium">对象：</dt><dd><code>cloudnav/latest.json</code></dd></div>
-            <div className="flex gap-2"><dt className="font-medium">绑定：</dt><dd><code>NAVIX_BACKUPS</code></dd></div>
+            <div className="flex gap-2"><dt className="font-medium">对象：</dt><dd><code>cove/latest.json</code></dd></div>
+            <div className="flex gap-2"><dt className="font-medium">绑定：</dt><dd><code>COVE_BACKUPS</code></dd></div>
             <div className="flex gap-2"><dt className="font-medium">重复数据：</dt><dd>跳过上传</dd></div>
             <div className="flex gap-2">
               <dt className="font-medium">最近一次：</dt>
               <dd>{lastBackup ? `${BACKUP_LABELS[lastBackup.status] || lastBackup.status} · ${new Date(lastBackup.at).toLocaleTimeString()}` : '本次会话尚未保存'}</dd>
             </div>
           </dl>
-          <p className="text-xs text-amber-600 dark:text-amber-400">正式部署需在 Cloudflare Pages 绑定 R2，浏览器不保存云端密钥。</p>
-          <p className="text-xs text-slate-400 dark:text-slate-500">该状态来自本页面最近一次保存响应，刷新后重置；本地 Vite 预览不会经过 Pages Functions。</p>
+          {onRestoreBackup && (
+            <button onClick={onRestoreBackup} className="mt-1 flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-white dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+              <History size={14} />从 R2 备份恢复
+            </button>
+          )}
+          <p className="text-xs text-slate-400 dark:text-slate-500">「最近一次」来自本页面最近一次保存响应，刷新后重置。</p>
         </div>
       </div>
     </section>

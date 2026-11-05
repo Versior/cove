@@ -9,12 +9,12 @@
   "theme_color": "#2563eb",
   "categories": ["utilities", "productivity", "navigation"],
   "share_target": {
-    "action": "/?share=true",
+    "action": "/",
     "method": "GET",
     "params": {
-      "title": "title",
-      "text": "text",
-      "url": "url"
+      "title": "add_title",
+      "text": "add_text",
+      "url": "add_url"
     }
   },
   "icons": [

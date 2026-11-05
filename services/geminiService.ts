@@ -1,6 +1,6 @@
 import { Category, LinkItem } from '../types';
-import { normalizeOpenAIEndpoint } from './openaiEndpoint';
 
+/** 前端只负责调用同源 /api/ai；提示词、密钥与上游重试都在服务端处理。 */
 type AITask = 'description' | 'category' | 'test' | 'folder_rename' | 'folder_structure';
 
 type ProviderConfig = {
@@ -11,14 +11,6 @@ type ProviderConfig = {
 };
 
 const isHtml = (text: string) => /<!doctype\s+html/i.test(text.trim()) || /<html[\s>]/i.test(text.trim());
-const parseJsonError = (rawText: string) => {
-  try {
-    const data = JSON.parse(rawText) as any;
-    return typeof data.error === 'string' ? data.error : data.error?.message || data.message || rawText;
-  } catch {
-    return rawText;
-  }
-};
 const parseJsonResponse = (rawText: string, provider: string) => {
   if (isHtml(rawText)) throw new Error(`${provider} 返回了 HTML 页面，请检查 Pages Functions 部署状态。`);
   try {
@@ -28,22 +20,6 @@ const parseJsonResponse = (rawText: string, provider: string) => {
   }
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const isRateLimitError = (status: number, text: string) => status === 429 || /rate limit|too many requests|quota|超过.*限制|限流/i.test(text);
-const parseRetryAfterMs = (response: Response, rawText: string) => {
-  const header = response.headers.get('retry-after');
-  if (header) {
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30000);
-  }
-  try {
-    const data = JSON.parse(rawText) as any;
-    const retry = data?.error?.retry_after || data?.retry_after;
-    if (typeof retry === 'number') return Math.min(Math.max(retry * 1000, 500), 30000);
-  } catch {
-    // Ignore malformed provider error bodies.
-  }
-  return 0;
-};
 
 let aiQueue: Promise<unknown> = Promise.resolve();
 const enqueueAI = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -79,34 +55,6 @@ export interface FolderStructureSuggestion {
   folders: Array<{ name: string; linkIds: string[]; reason?: string }>;
   keepInParent: string[];
 }
-
-const buildPrompts = (task: AITask, body: Record<string, unknown>) => {
-  if (task === 'test') return { system: 'You are a connection tester. Reply with exactly OK.', user: 'Reply with exactly: OK' };
-  if (task === 'description') return {
-    system: 'You summarize website bookmarks.',
-    user: `Title: ${body.title}\nURL: ${body.url}\n用简体中文写 15 字以内的网站用途说明，只返回说明文本。`,
-  };
-  if (task === 'folder_rename') {
-    const samples = (body.samples as string[] | undefined) || [];
-    return {
-      system: 'You rename bookmark folders. Return only a short Chinese name.',
-      user: `Current folder: ${body.folderName}\nBookmarks:\n${samples.join('\n') || '无'}\n返回新的中文文件夹名称。`,
-    };
-  }
-  if (task === 'folder_structure') {
-    const links = (body.links as Array<{ id: string; title: string; url: string; description?: string }> | undefined) || [];
-    const existing = (body.existingNames as string[] | undefined) || [];
-    return {
-      system: 'You reorganize bookmark folders. Return valid JSON only.',
-      user: `Parent: ${body.folderName}\nExisting: ${existing.join('、') || '无'}\nBookmarks:\n${links.map(link => `- id=${link.id} | ${link.title} | ${link.url}${link.description ? ` | ${link.description}` : ''}`).join('\n')}\nReturn {"rename":"optional","reason":"short","folders":[{"name":"name","linkIds":["id"],"reason":"short"}],"keepInParent":["id"]}. Every id must appear exactly once.`,
-    };
-  }
-  const categories = (body.categories as Pick<Category, 'id' | 'name'>[] | undefined) || [];
-  return {
-    system: 'You classify bookmarks. Return only a category ID.',
-    user: `Website: ${body.title} (${body.url})\nCategories:\n${categories.map(category => `${category.id}: ${category.name}`).join('\n')}\n只返回最佳分类 ID，不确定时返回 common。`,
-  };
-};
 
 const sanitizeCategoryResponse = (text: string, categories: Pick<Category, 'id' | 'name'>[] = []) => {
   const cleaned = stripCodeFence(text).replace(/^['"]|['"]$/g, '').trim();

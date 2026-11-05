@@ -9,7 +9,7 @@ export interface SortConfig {
   direction: SortDirection;
 }
 
-export const DEFAULT_SORT: SortConfig = { key: 'manual', direction: 'asc' };
+const DEFAULT_SORT: SortConfig = { key: 'manual', direction: 'asc' };
 
 export const SORT_OPTIONS: Array<{ key: SortKey; label: string; hint: string }> = [
   { key: 'manual', label: '手动顺序', hint: '拖拽或整理模式调整' },

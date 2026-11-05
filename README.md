@@ -11,8 +11,8 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/tests-8%20passing-3fb950)](#工程实践)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-10%20passing-3fb950)](#工程实践)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [快速开始](#快速开始) · [设计语言](#设计语言) · [架构](#架构) · [工程实践](#工程实践)
 
@@ -67,8 +67,8 @@ Cove 的取舍很明确：
 
 - 版本化同步：`baseVersion` 冲突检测，并发写入返回 `409` 而非静默覆盖
 - 内容哈希比对：数据未变化时跳过 R2 上传
-- 固定备份对象：只维护 `latest.json` 一份，不堆积时间戳历史
-- JSON / HTML 双向导入导出
+- 固定备份对象：只维护 `cove/latest.json` 一份，不堆积时间戳历史，可在「设置 → 备份与恢复」一键恢复
+- JSON / HTML 双向导入导出，导入时同名文件夹自动合并到现有分类
 
 ### AI
 
@@ -89,6 +89,16 @@ Cove 的取舍很明确：
 git clone https://github.com/Versior/cove.git
 cd cove
 npm install
+```
+
+前端和 API 分两个进程跑。先在项目根目录建 `.dev.vars`（已在 `.gitignore` 中），写入 `PASSWORD=本地测试密码`，然后：
+
+```bash
+# 终端 1：Pages Functions（/api/*），默认 http://127.0.0.1:8788
+npm run build
+npx wrangler pages dev dist --kv COVE_KV --r2 COVE_BACKUPS
+
+# 终端 2：前端热更新，/api 自动代理到 8788
 npm run dev          # http://localhost:5173
 ```
 
@@ -98,7 +108,7 @@ npm run dev          # http://localhost:5173
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # node:test，8 个用例
+npm test             # node:test，10 个用例
 npm run build        # typecheck + vite build
 ```
 
@@ -126,7 +136,10 @@ wrangler r2 bucket create cove-backups
 | `GEMINI_API_KEY` | Secret | Google Gemini 的 Key（用 Gemini 时必填） |
 
 > KV 与 R2 绑定在 `Settings → Functions → Bindings` 中配置，
-> KV 绑定名 `COVE_KV`，R2 绑定名 `COVE_BACKUPS`（代码同时兼容旧名 `NAVIX_BACKUPS`）。
+> KV 绑定名 `COVE_KV`，R2 绑定名 `COVE_BACKUPS`。
+>
+> 登录接口的限流只在单个实例内生效。公网部署建议在 Cloudflare `Security → WAF → Rate limiting rules`
+> 给 `/api/auth` 加一条规则（例如同一 IP 每分钟 10 次）。
 
 **3. 部署**
 
@@ -134,6 +147,13 @@ wrangler r2 bucket create cove-backups
 npm run build
 wrangler pages deploy dist --project-name=cove
 ```
+
+### 从旧版部署升级
+
+- 浏览器本地缓存的旧键（`cloudnav_*`）会在首次打开时自动迁移成 `cove_*`
+- 会话 cookie 改名为 `cove_session`，升级后每台设备需要重新登录一次
+- R2 备份对象改为 `cove/latest.json`，下一次保存书签时自动写入；旧的 `cloudnav/latest.json` 可在 R2 控制台手动删除
+- 绑定名只认 `COVE_KV` / `COVE_BACKUPS`：升级前先在控制台把旧绑定改名（指向同一个 KV 命名空间和 R2 桶），再部署新代码
 
 ## 设计语言
 
@@ -200,13 +220,12 @@ Cove 的视觉不是"调了几次颜色"，而是从 macOS 的系统材质反向
 │  │ dnd-kit        │     │ /api/ai       代理 AI 请求   │  │
 │  └────────────────┘     │ /api/favicon  图标代理       │  │
 │                          │ /api/fetchtitle 标题抓取    │  │
-│                          │ /api/link      扩展写入      │  │
 │                          └──────────┬──────────────────┘  │
 │                                     │                     │
 │                    ┌────────────────┴───────────────┐     │
 │                    ▼                                ▼     │
 │              KV  (COVE_KV)                   R2 (COVE_BACKUPS) │
-│         书签 / 分类 / 配置 / 图标缓存         cloudnav/latest.json │
+│            书签 / 分类 / 配置                 cove/latest.json │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -217,22 +236,23 @@ Cove 的视觉不是"调了几次颜色"，而是从 macOS 的系统材质反向
 │   ├── _shared/
 │   │   ├── auth.ts            # 会话、鉴权、CORS
 │   │   ├── dataStore.ts       # 版本化读写、R2 固定备份、写入队列
-│   │   └── hostGuard.ts       # SSRF 防护：拦内网 / 本地 / 重定向绕过
+│   │   ├── hostGuard.ts       # SSRF 防护：拦内网 / 本地 / 保留地址
+│   │   └── safeFetch.ts       # 对外抓取：逐跳校验重定向 + 响应体上限
 │   └── api/
 │       ├── auth.ts            # 登录、登出
-│       ├── storage.ts         # 数据与配置读写
+│       ├── storage.ts         # 数据、配置读写与 R2 备份读取
 │       ├── ai.ts              # AI 代理（Key 只在服务端）
-│       ├── favicon.ts         # 图标代理（边缘抓取 + CDN 缓存）
-│       ├── fetchtitle.ts      # 标题抓取
-│       └── link.ts            # 浏览器扩展写入接口
-├── components/                # 30 个 UI 组件
-├── services/                  # 13 个纯逻辑模块
+│       ├── favicon.ts         # 图标代理（边缘抓取 + Cache API 缓存）
+│       └── fetchtitle.ts      # 标题抓取
+├── components/                # UI 组件
+├── services/                  # 纯逻辑模块
 │   ├── density.ts             # 密度三档的尺寸映射
 │   ├── fillScreen.ts          # 首屏自适应计算
 │   ├── sorting.ts             # 五种排序 + 手动序
 │   ├── wallpaper.ts           # 壁纸预设与自定义
-│   └── dataNormalization.ts   # 数据规范化与迁移
-├── tests/core.test.ts         # 8 个核心用例
+│   ├── importMerge.ts         # 导入时按名称合并分类
+│   └── dataNormalization.ts   # 数据规范化
+├── tests/core.test.ts         # 核心用例
 └── index.css                  # 设计令牌 + 材质系统
 ```
 
@@ -243,11 +263,13 @@ Functions 与静态资源同域，省掉跨域、省掉一处配置失误就全�
 
 **边缘代抓图标。** 浏览器不直连 Google——项目在 Cloudflare 上，但用户在国内，
 `gstatic` 会大面积失败。`/api/favicon` 由边缘按
-`站点 /favicon.ico → 页面 <link rel="icon"> → DuckDuckGo` 顺序取图，
-带 7 天 CDN 缓存，同一域名只回源一次。
+`站点 /favicon.ico → 页面 <link rel="icon"> → DuckDuckGo` 顺序取图。
+结果写入边缘 Cache API（成功 7 天、失败 1 天）。Cache API 的缓存只在单个数据中心内有效，不跨机房复制，
+站点套了 Cloudflare Access 时不可用。前端对同一书签的图标探测全局去重，置顶区、网格和 Dock 共用一次结果。
+图标响应带 `Content-Security-Policy: sandbox` 与 `nosniff`，上游返回的 SVG 无法在本站源里执行脚本。
 
-**SSRF 防护。** `hostGuard.ts` 在**每次**外部抓取前校验主机：
-拦截私网段、回环、云元数据地址，并禁止跟随重定向（否则公网地址可 302 到内网绕过校验）。
+**SSRF 防护。** `safeFetch.ts` 手动跟随重定向（最多 3 跳），**每一跳**都用 `hostGuard.ts` 校验主机：
+拦截私网段、回环、云元数据地址，避免公网地址 302 到内网绕过校验。
 
 **数据一致性。** KV 是最终一致的，但 `dataStore.ts` 通过
 写入队列 + `baseVersion` 比对，让并发写至少能返回 `409`，
@@ -260,32 +282,29 @@ Functions 与静态资源同域，省掉跨域、省掉一处配置失误就全�
 ```bash
 $ npm test
 
-✔ normalizes legacy links without losing ordinary fields
+✔ normalizes links: dedupes, drops invalid, and moves orphans to common
 ✔ normalizes OpenAI-compatible endpoints and rejects webpage URLs
-✔ drops retired categories together with their links
+✔ keeps categories whose ids match old CloudNav defaults, with their links
+✔ import merges folders by name instead of dumping them into common
 ✔ persists versions, detects conflicts, and skips unchanged content
 ✔ writes only the fixed latest R2 object and skips the same hash
 ✔ does not let an older backup overwrite a newer stored version
 ✔ blocks private and loopback hosts while allowing public hosts
 ✔ reorders by order field and keeps the drag result visible
+✔ refuses to treat corrupted KV data as an empty dataset
 
-tests 8 · pass 8 · fail 0
+tests 10 · pass 10 · fail 0
 ```
 
-覆盖的是**容易悄悄坏掉的地方**：数据迁移、冲突检测、R2 去重、版本回退、SSRF 白名单、拖拽序持久化。
+覆盖的是**容易悄悄坏掉的地方**：数据规范化、导入合并、冲突检测、R2 去重、版本回退、损坏数据保护、SSRF 白名单、拖拽序持久化。
 
 ### 类型
 
-```
-strict: true
-noUnusedLocals · noUnusedParameters · noFallthroughCasesInSwitch
-```
-
-9533 行 TS/TSX，`tsc --noEmit` 零错误。
+`tsc --noEmit` 零错误，已开启 `noUnusedLocals` / `noUnusedParameters`。目前未开启 `strict`，这是后续要补的工程债。
 
 ### 依赖
 
-10 个生产依赖，且刻意保持克制：
+8 个生产依赖，且刻意保持克制：
 
 | 依赖 | 用途 |
 |---|---|
@@ -294,8 +313,6 @@ noUnusedLocals · noUnusedParameters · noFallthroughCasesInSwitch
 | `lucide-react` | 图标 |
 | `pinyin-pro` | 中文首字母搜索 |
 | `qrcode` | 二维码生成 |
-| `jszip` | 扩展打包 |
-| `uuid` | ID 生成 |
 
 没有 UI 框架、没有状态管理库、没有 HTTP 客户端——`fetch` 够用。
 
@@ -304,7 +321,7 @@ noUnusedLocals · noUnusedParameters · noFallthroughCasesInSwitch
 - [ ] 书签快照与历史回滚
 - [ ] 多用户与权限
 - [ ] 标签体系重构（独立实体，支持重命名/合并）
-- [ ] 主 chunk 拆包（当前 ~1.2MB）
+- [x] 主 chunk 拆包（1.2 MB → 369 KB，图标全集与拼音字典按需加载）
 - [ ] 移动端手势优化
 
 ## 已知限制
@@ -312,10 +329,11 @@ noUnusedLocals · noUnusedParameters · noFallthroughCasesInSwitch
 - **KV 最终一致** — 跨实例并发写无法做到原子事务，只能检测后返回 409
 - **AI 需自行配置 Key** — 不提供公共额度，`OPENAI_API_KEY` / `GEMINI_API_KEY` 需在 Cloudflare 后台添加
 - **图标依赖外部可达性** — 站点本身没有 favicon 时回落到彩色首字母，这是预期行为
+- **分类密码只是显示锁** — 密码以明文随书签数据保存，只防同屏窥视，不加密数据本身
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)。本项目基于 [aabacada/CloudNav-abcd](https://github.com/aabacada/CloudNav-abcd) 二次开发，沿用其 Apache-2.0 许可。
 
 ---
 

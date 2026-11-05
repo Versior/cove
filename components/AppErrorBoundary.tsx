@@ -1,4 +1,5 @@
 import React from 'react';
+import { LOCAL_STORAGE_KEY } from '../constants/storageKeys';
 
 interface AppErrorBoundaryState {
   error: Error | null;
@@ -12,8 +13,7 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, AppError
   }
 
   private resetLocalData = () => {
-    localStorage.removeItem('cloudnav_data_cache');
-    localStorage.removeItem('cloudnav_search_config');
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
     sessionStorage.clear();
     window.location.reload();
   };

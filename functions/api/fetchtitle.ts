@@ -1,5 +1,6 @@
-import { jsonResponse, optionsResponse, requireAuth } from '../_shared/auth';
+import { jsonResponse, requireAuth } from '../_shared/auth';
 import { isBlockedHost } from '../_shared/hostGuard';
+import { readBody, safeFetch } from '../_shared/safeFetch';
 
 interface Env {
   PASSWORD: string;
@@ -9,10 +10,15 @@ interface Env {
 const MAX_BYTES = 512 * 1024;
 const TIMEOUT_MS = 8000;
 
-export const onRequestOptions = async (context: { request: Request }) => optionsResponse(context.request);
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
+const decodeEntities = (value: string) => value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, body: string) => {
+  if (body[0] !== '#') return NAMED_ENTITIES[body.toLowerCase()] ?? entity;
+  const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+  return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+});
 
-// 服务端抓取网页 <title>，免 CORS。鉴权 + SSRF 防护（拦内网 / 本地 / 重定向绕过）。
+// 服务端抓取网页 <title>，免 CORS。鉴权 + SSRF 防护，重定向每一跳都重新校验主机。
 export const onRequestGet = async (context: { env: Env; request: Request }) => {
   const { env, request } = context;
 
@@ -20,42 +26,32 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
   if (authError) return authError;
 
   const target = new URL(request.url).searchParams.get('url');
-  if (!target) return jsonResponse({ error: 'url required' }, { status: 400 }, request);
+  if (!target) return jsonResponse({ error: 'url required' }, { status: 400 });
 
   let parsed: URL;
-  try { parsed = new URL(target); } catch { return jsonResponse({ error: 'invalid url' }, { status: 400 }, request); }
+  try { parsed = new URL(target); } catch { return jsonResponse({ error: 'invalid url' }, { status: 400 }); }
 
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return jsonResponse({ error: 'unsupported protocol' }, { status: 400 }, request);
+    return jsonResponse({ error: 'unsupported protocol' }, { status: 400 });
   }
   if (isBlockedHost(parsed.hostname)) {
-    return jsonResponse({ error: '不支持内网 / 本地地址' }, { status: 400 }, request);
+    return jsonResponse({ error: '不支持内网 / 本地地址' }, { status: 400 });
   }
 
   try {
-    // 禁止跟随重定向：否则公网地址可 302 到内网，绕过上面的主机校验
-    const res = await fetch(parsed.toString(), {
+    const result = await safeFetch(parsed.toString(), {
       headers: { 'User-Agent': 'Cove/1.0 (+bookmark title fetch)' },
-      redirect: 'manual',
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    if (!result) return jsonResponse({ error: '目标地址或跳转不被允许' }, { status: 400 });
+    if (!result.response.ok) return jsonResponse({ title: '' });
 
-    if (res.status >= 300 && res.status < 400) {
-      return jsonResponse({ error: '不跟随重定向' }, { status: 400 }, request);
-    }
-    if (!res.ok) return jsonResponse({ title: '' }, {}, request);
-
-    const length = Number(res.headers.get('content-length') || 0);
-    if (length > MAX_BYTES) return jsonResponse({ title: '' }, {}, request);
-
-    const html = (await res.text()).slice(0, MAX_BYTES);
-    const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    let title = m ? m[1].replace(/\s+/g, ' ').trim() : '';
-    title = title
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'");
-    return jsonResponse({ title }, {}, request);
+    const bytes = await readBody(result.response, MAX_BYTES, 'truncate');
+    const html = bytes ? new TextDecoder().decode(bytes) : '';
+    const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = match ? decodeEntities(match[1].replace(/\s+/g, ' ').trim()) : '';
+    return jsonResponse({ title });
   } catch {
-    return jsonResponse({ error: 'fetch failed' }, { status: 502 }, request);
+    return jsonResponse({ error: 'fetch failed' }, { status: 502 });
   }
 };
