@@ -121,13 +121,13 @@ const DuplicateLinksPanel: React.FC<DuplicateLinksPanelProps> = ({
  重复网址检测
  </div>
  <p className="mt-1 text-xs text-ink-soft leading-relaxed">
- 自动忽略协议、www、末尾斜杠和常见追踪参数。建议保留访问更多、有笔记/账号的那一条。
+ 自动忽略协议、www、末尾斜杠和常见追踪参数。建议保留访问更多、有笔记或描述的那一条。
  </p>
  </div>
  <button
  type="button"
  onClick={scan}
- className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-accent hover:bg-accent text-white"
+ className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-accent text-white transition-opacity hover:opacity-90"
  >
  <RefreshCw size={14} />
  {groups ? '重新扫描' : '开始扫描'}
@@ -136,15 +136,15 @@ const DuplicateLinksPanel: React.FC<DuplicateLinksPanelProps> = ({
 
  {summary && (
  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
- <div className="rounded-xl bg-white border border-line px-2 py-2">
+ <div className="rounded-xl bg-raised border border-line px-2 py-2">
  <div className="text-lg font-semibold text-ink dark:text-white">{summary.groupCount}</div>
  <div className="text-[11px] text-ink-soft">重复组</div>
  </div>
- <div className="rounded-xl bg-white border border-line px-2 py-2">
+ <div className="rounded-xl bg-raised border border-line px-2 py-2">
  <div className="text-lg font-semibold text-ink dark:text-white">{summary.duplicateLinks}</div>
  <div className="text-[11px] text-ink-soft">重复书签</div>
  </div>
- <div className="rounded-xl bg-white border border-line px-2 py-2">
+ <div className="rounded-xl bg-raised border border-line px-2 py-2">
  <div className="text-lg font-semibold text-amber-600 dark:text-amber-400">{deleteIds.size}</div>
  <div className="text-[11px] text-ink-soft">待删除</div>
  </div>
@@ -163,10 +163,10 @@ const DuplicateLinksPanel: React.FC<DuplicateLinksPanelProps> = ({
  {groups && groups.length > 0 && (
  <div className="space-y-3">
  <div className="flex flex-wrap gap-2">
- <button type="button" onClick={selectRecommended} className="px-3 py-1.5 text-xs rounded-lg border border-line bg-white text-ink-soft">
+ <button type="button" onClick={selectRecommended} className="px-3 py-1.5 text-xs rounded-lg border border-line bg-raised text-ink-soft">
  按推荐重选
  </button>
- <button type="button" onClick={clearDeleteSelection} className="px-3 py-1.5 text-xs rounded-lg border border-line bg-white text-ink-soft">
+ <button type="button" onClick={clearDeleteSelection} className="px-3 py-1.5 text-xs rounded-lg border border-line bg-raised text-ink-soft">
  清空删除勾选
  </button>
  <button
@@ -182,8 +182,8 @@ const DuplicateLinksPanel: React.FC<DuplicateLinksPanelProps> = ({
  {groups.map((group, index) => {
  const keepId = keepIds[group.key] || group.recommendedKeepId;
  return (
- <div key={group.key} className="rounded-2xl border border-line bg-white overflow-hidden">
- <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between gap-2 bg-canvas/80">
+ <div key={group.key} className="rounded-2xl border border-line bg-raised overflow-hidden">
+ <div className="px-3 py-2 border-b border-line flex items-center justify-between gap-2 bg-canvas/80">
  <div className="min-w-0">
  <div className="text-xs font-medium text-ink">
  第 {index + 1} 组 · {group.members.length} 条
@@ -193,7 +193,7 @@ const DuplicateLinksPanel: React.FC<DuplicateLinksPanelProps> = ({
  <div className="text-[11px] text-ink-muted shrink-0">key: {group.key.slice(0, 36)}{group.key.length > 36 ? '…' : ''}</div>
  </div>
 
- <div className="divide-y divide-slate-100 dark:divide-slate-700">
+ <div className="divide-y divide-line">
  {group.members.map(member => {
  const link = member.link;
  const isKeep = link.id === keepId;

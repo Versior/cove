@@ -9,7 +9,7 @@ import { LOCAL_STORAGE_KEY, AI_CONFIG_KEY, SITE_SETTINGS_KEY, SORT_CONFIG_KEY, T
 import { applyReorder, applySort, canReorder, normalizeSortConfig, type SortConfig } from './services/sorting';
 import { normalizeDensity } from './services/density';
 import { computeFillCount, useElementHeight, useGridColumns } from './services/fillScreen';
-import { applyWallpaper } from './services/wallpaper';
+import { applyWallpaper, normalizeWallpaperDim, normalizeWallpaperPreset } from './services/wallpaper';
 
 import { normalizeAppData } from './services/dataNormalization';
 import { generateBookmarkHtml, downloadHtmlFile } from './services/exportService';
@@ -43,6 +43,23 @@ const DENSITY_GAPS: Record<Density, number> = {
   spacious: 16,
 };
 const DEFAULT_SITE_SETTINGS = { title: 'Cove - 我的导航', navTitle: 'Cove', favicon: '', cardStyle: 'icon' as const, density: 'cozy' as const, wallpaperPreset: 'sonoma' as const, wallpaperDim: 12 };
+const CARD_STYLES: ReadonlyArray<CardStyle> = ['icon', 'detailed', 'simple', 'list'];
+const DEFAULT_FAVICON = '/icon.svg';
+
+/**
+ * 只保留当前版本认识的网站设置字段。
+ * 旧版写进 website_config 的 passwordExpiryDays 等字段，读进来后不会再被原样存回云端。
+ */
+const normalizeSiteSettings = (value: Partial<SiteSettings> = {}): SiteSettings => ({
+  title: typeof value.title === 'string' ? value.title : DEFAULT_SITE_SETTINGS.title,
+  navTitle: typeof value.navTitle === 'string' ? value.navTitle : DEFAULT_SITE_SETTINGS.navTitle,
+  favicon: typeof value.favicon === 'string' ? value.favicon : '',
+  cardStyle: CARD_STYLES.includes(value.cardStyle as CardStyle) ? value.cardStyle as CardStyle : DEFAULT_SITE_SETTINGS.cardStyle,
+  density: normalizeDensity(value.density),
+  wallpaper: typeof value.wallpaper === 'string' ? value.wallpaper : undefined,
+  wallpaperPreset: normalizeWallpaperPreset(value.wallpaperPreset),
+  wallpaperDim: normalizeWallpaperDim(value.wallpaperDim),
+});
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
 const DEFAULT_AI_CONFIG: AIConfig = { provider: 'gemini', baseUrl: '', model: 'gemini-2.5-flash' };
@@ -142,14 +159,7 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   const [aiConfig, setAiConfig] = useState<AIConfig>(() => readAIConfig());
-  const [siteSettings, setSiteSettings] = useState<SiteSettings>(() => {
-    const stored = readJson<Partial<SiteSettings>>(SITE_SETTINGS_KEY, {});
-    return {
-      ...DEFAULT_SITE_SETTINGS,
-      ...stored,
-      density: normalizeDensity(stored.density),
-    };
-  });
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>(() => normalizeSiteSettings(readJson<Partial<SiteSettings>>(SITE_SETTINGS_KEY, {})));
   const [authToken, setAuthToken] = useState(false);
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
@@ -292,7 +302,7 @@ const App: React.FC = () => {
     }
     if (siteResponse.ok) {
       const remote = await siteResponse.json();
-      setSiteSettings(current => ({ ...current, ...remote }));
+      setSiteSettings(current => normalizeSiteSettings({ ...current, ...remote }));
     }
   };
 
@@ -352,11 +362,11 @@ const App: React.FC = () => {
 
   useEffect(() => {
     document.title = siteSettings.title || 'Cove';
-    if (!siteSettings.favicon) return;
+    // 清空自定义图标时恢复默认图标，否则旧图标会一直留到刷新
     document.querySelectorAll('link[rel="icon"]').forEach(node => node.remove());
     const link = document.createElement('link');
     link.rel = 'icon';
-    link.href = siteSettings.favicon;
+    link.href = siteSettings.favicon || DEFAULT_FAVICON;
     document.head.appendChild(link);
   }, [siteSettings.title, siteSettings.favicon]);
 
@@ -431,8 +441,14 @@ const App: React.FC = () => {
       model: config.model.trim() || DEFAULT_AI_CONFIG.model,
       hasApiKey: false,
     };
-    let nextConfig = requestedConfig;
-    if (authToken) {
+    const sameAI = requestedConfig.provider === aiConfig.provider && requestedConfig.baseUrl === aiConfig.baseUrl && requestedConfig.model === aiConfig.model;
+    const normalizedSite = nextSiteSettings ? normalizeSiteSettings(nextSiteSettings) : null;
+    const sameSite = !normalizedSite || JSON.stringify(normalizedSite) === JSON.stringify(siteSettings);
+    let failed = false;
+
+    // 只把真正改过的部分写回云端：每次点「保存」都写两遍 KV 既浪费额度，也没有意义
+    let nextConfig = { ...requestedConfig, hasApiKey: aiConfig.hasApiKey };
+    if (authToken && !sameAI) {
       const response = await fetch('/api/storage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -441,19 +457,25 @@ const App: React.FC = () => {
       if (response?.ok) {
         const result = await response.json().catch(() => ({}));
         if (result.config) nextConfig = { ...requestedConfig, ...result.config, hasApiKey: result.config.hasApiKey === true };
+      } else {
+        failed = true;
       }
     }
     setAiConfig(nextConfig);
     localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(nextConfig));
-    if (nextSiteSettings) {
-      setSiteSettings(nextSiteSettings);
-      localStorage.setItem(SITE_SETTINGS_KEY, JSON.stringify(nextSiteSettings));
-      if (authToken) await fetch('/api/storage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saveConfig: 'website', config: nextSiteSettings }),
-      }).catch(() => undefined);
+    if (normalizedSite && !sameSite) {
+      setSiteSettings(normalizedSite);
+      localStorage.setItem(SITE_SETTINGS_KEY, JSON.stringify(normalizedSite));
+      if (authToken) {
+        const response = await fetch('/api/storage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ saveConfig: 'website', config: normalizedSite }),
+        }).catch(() => null);
+        if (!response?.ok) failed = true;
+      }
     }
+    if (failed) showToast('设置已在本机生效，但同步到云端失败，请稍后重试', { type: 'error' });
   };
 
   const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[]) => {
@@ -654,7 +676,7 @@ const App: React.FC = () => {
   const changeSort = (next: SortConfig) => setSortConfig(next);
   /** 保存外观类设置：本地立即生效并持久化，登录时同步到云端。 */
   const persistSiteSettings = (patch: Partial<SiteSettings>) => {
-    const next = { ...siteSettings, ...patch };
+    const next = normalizeSiteSettings({ ...siteSettings, ...patch });
     setSiteSettings(next);
     localStorage.setItem(SITE_SETTINGS_KEY, JSON.stringify(next));
     if (authToken) void fetch('/api/storage', {

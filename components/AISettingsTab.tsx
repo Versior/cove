@@ -58,6 +58,14 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
   const [stop, setStop] = useState(false);
   const stopRef = useRef(false);
   useEffect(() => { stopRef.current = stop; }, [stop]);
+  // 批量任务可能跑好几分钟：结束时基于最新数据合并，避免用开始时的旧快照覆盖期间的其它修改
+  const linksRef = useRef(links);
+  linksRef.current = links;
+  const onUpdateLinksRef = useRef(onUpdateLinks);
+  onUpdateLinksRef.current = onUpdateLinks;
+  // 切到别的设置页或关闭设置时停止，不再在后台继续调用 AI
+  useEffect(() => () => { stopRef.current = true; }, []);
+  const categoryName = (id?: string) => categories.find(category => category.id === id)?.name || id || '';
 
   useEffect(() => {
     if (!initialCategoryId) return;
@@ -131,22 +139,24 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
   };
 
   const generateDescriptions = async () => {
-    const missing = links.filter(link => !link.description?.trim() || link.description === '生成描述失败');
+    const missing = links.filter(link => !link.description?.trim());
     if (!missing.length) { notify('所有书签都已有描述'); return; }
     if (!ensureReady('正在生成描述')) return;
     setProgress({ current: 0, total: missing.length });
-    let next = [...links];
-    let success = 0;
+    const descriptions = new Map<string, string>();
     for (let index = 0; index < missing.length && !stopRef.current; index += 1) {
       const link = missing[index];
       try {
         const description = await generateLinkDescription(link.title, link.url, config);
-        if (description) { next = next.map(item => item.id === link.id ? { ...item, description, updatedAt: Date.now() } : item); success += 1; }
+        if (description) descriptions.set(link.id, description);
       } catch (error) { notify(error instanceof Error ? error.message : '部分描述生成失败', 'error'); }
       setProgress({ current: index + 1, total: missing.length });
     }
-    onUpdateLinks(next);
-    notify(`描述生成完成：成功 ${success} 个`);
+    if (descriptions.size) {
+      const now = Date.now();
+      onUpdateLinksRef.current(linksRef.current.map(item => descriptions.has(item.id) && !item.description?.trim() ? { ...item, description: descriptions.get(item.id), updatedAt: now } : item));
+    }
+    notify(`描述生成完成：成功 ${descriptions.size} 个`);
     setIsProcessing(false);
     setLabel('');
   };
@@ -410,7 +420,7 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
                   })}
                 />
                 <span className="truncate text-slate-600 dark:text-slate-300">{item.title}</span>
-                <span className={`shrink-0 ${item.error ? 'text-red-500' : 'text-slate-400'}`}>{item.error || `${item.from} → ${item.to}`}</span>
+                <span className={`shrink-0 ${item.error ? 'text-red-500' : 'text-slate-400'}`}>{item.error || `${categoryName(item.from)} → ${categoryName(item.to)}`}</span>
               </label>
             ))}
           </div>

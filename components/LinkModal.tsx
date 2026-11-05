@@ -184,7 +184,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         
         const [desc, cat] = await Promise.all([descPromise, catPromise]);
         
-        if (desc && desc.trim() !== '生成描述失败') setDescription(desc);
+        if (desc?.trim()) setDescription(desc);
         if (cat && categories.some(c => c.id === cat)) setCategoryId(cat);
         
     } catch (e) {

@@ -69,13 +69,13 @@ const PRESET_GRADIENTS: Record<Exclude<WallpaperPreset, 'custom'>, { light: stri
   },
 };
 
-const normalizeWallpaperPreset = (value: unknown): WallpaperPreset =>
+export const normalizeWallpaperPreset = (value: unknown): WallpaperPreset =>
   value === 'ventura' || value === 'monterey' || value === 'graphite' || value === 'custom'
     ? value
     : 'sonoma';
 
 /** 壁纸暗化：0 = 不暗化，100 = 全黑。默认给一点，保证文字清晰。 */
-const normalizeWallpaperDim = (value: unknown): number => {
+export const normalizeWallpaperDim = (value: unknown): number => {
   const n = Number(value);
   if (!Number.isFinite(n)) return 12;
   return Math.max(0, Math.min(80, Math.round(n)));
@@ -95,8 +95,9 @@ export const applyWallpaper = (settings: SiteSettings, dark: boolean): void => {
     ? `linear-gradient(hsl(${dark ? '240 20% 4%' : '0 0% 100%'} / ${(dim / 100).toFixed(2)}), hsl(${dark ? '240 20% 4%' : '0 0% 100%'} / ${(dim / 100).toFixed(2)}))`
     : '';
 
-  if (preset === 'custom' && settings.wallpaper) {
-    const url = `url("${settings.wallpaper.replace(/"/g, '%22')}")`;
+  // 只接受 http(s) 图片地址；引号和反斜杠转义，避免地址里的字符提前闭合 url("…")
+  if (preset === 'custom' && settings.wallpaper && /^https?:\/\//i.test(settings.wallpaper.trim())) {
+    const url = `url("${settings.wallpaper.trim().replace(/["\\]/g, ch => encodeURIComponent(ch))}")`;
     root.style.setProperty('--wallpaper', dimLayer ? `${dimLayer}, ${url}` : url);
     root.style.setProperty('--wallpaper-size', 'cover');
     return;

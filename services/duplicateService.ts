@@ -62,7 +62,7 @@ const scoreLink = (link: LinkItem): number => {
   if (link.pinned) score += 1000;
   score += Math.min(link.visitCount || 0, 200) * 5;
   if (link.note?.trim()) score += 40;
-  if (link.description?.trim() && link.description.trim() !== '生成描述失败') score += 20;
+  if (link.description?.trim()) score += 20;
   if (link.tags && link.tags.length > 0) score += 10;
   if (link.icon) score += 5;
   if (link.lastVisitedAt) score += Math.min(link.lastVisitedAt / 1e12, 50);
