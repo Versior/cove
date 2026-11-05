@@ -127,7 +127,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         label={category.name}
         active={selectedCategory === category.id}
         depth={depth}
-        locked={!!category.password}
+        locked={!!category.passwordHash}
         countText={counts[category.id] ? String(counts[category.id]) : ''}
         density={density}
         onClick={() => onSelectCategory(category)}

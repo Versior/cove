@@ -21,8 +21,8 @@ export interface Category {
   id: string;
   name: string;
   icon: string;
-  color?: string;
-  password?: string;
+  /** 分类显示锁的密码哈希（见 services/categoryLock.ts），不存明文。 */
+  passwordHash?: string;
   parentId?: string;
 }
 

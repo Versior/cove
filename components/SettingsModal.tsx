@@ -121,7 +121,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
             {activeTab === 'site' && <SiteSettingsTab value={localSiteSettings} onChange={handleSiteChange} />}
-            {activeTab === 'backup' && <BackupSettingsTab onExportJson={onExportJson} onOpenImport={onOpenImport} onRestoreBackup={onRestoreBackup} lastBackup={lastBackup} />}
+            {activeTab === 'backup' && <BackupSettingsTab links={links} onUpdateLinks={onUpdateLinks} onExportJson={onExportJson} onOpenImport={onOpenImport} onRestoreBackup={onRestoreBackup} lastBackup={lastBackup} />}
             {activeTab === 'ai' && <AISettingsTab config={localConfig} onChange={handleChange} links={links} categories={categories} onUpdateLinks={onUpdateLinks} onUpdateCategories={onUpdateCategories} onUpdateData={onUpdateData} initialCategoryId={initialAICategoryId} initialAIAction={initialAIAction} />}
             {activeTab === 'duplicates' && <DuplicateLinksPanel links={links} categories={categories} onUpdateLinks={onUpdateLinks} onEditLink={onEditLink} />}
           </div>

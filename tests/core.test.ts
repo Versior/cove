@@ -224,3 +224,17 @@ test('refuses to treat corrupted KV data as an empty dataset', async () => {
   await kv.put('app_data', '{not json');
   await assert.rejects(() => persistData({ COVE_KV: kv }, { links: [], categories: [] }, 0), /损坏/);
 });
+
+test('category lock stores only a salted hash and drops legacy plaintext passwords', async () => {
+  const { hashCategoryPassword, verifyCategoryPassword } = await import('../services/categoryLock.ts');
+  const hash = await hashCategoryPassword('cat-1', '1234');
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.notEqual(hash, await hashCategoryPassword('cat-2', '1234'), 'same password must hash differently per category');
+  assert.equal(await verifyCategoryPassword({ id: 'cat-1', passwordHash: hash }, '1234'), true);
+  assert.equal(await verifyCategoryPassword({ id: 'cat-1', passwordHash: hash }, '0000'), false);
+
+  const client = normalizeAppData({ categories: [{ id: 'old', name: '旧分类', icon: 'Folder', password: 'plain' }], links: [] });
+  assert.equal('password' in client.categories[1], false);
+  const server = normalizeData({ categories: [{ id: 'old', name: '旧分类', password: 'plain' }], links: [] });
+  assert.equal('password' in server.categories[1], false);
+});

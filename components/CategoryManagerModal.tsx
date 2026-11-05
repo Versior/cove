@@ -4,17 +4,20 @@ import { X, ArrowUp, ArrowDown, Trash2, Edit2, Plus, Check, Lock, Palette } from
 import { Category } from '../types';
 import Icon from './Icon';
 import IconSelector from './IconSelector';
-import CategoryActionAuthModal from './CategoryActionAuthModal';
+import { hashCategoryPassword } from '../services/categoryLock';
 
 interface CategoryManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   categories: Category[];
   onUpdateCategories: (newCategories: Category[]) => void;
+  /** 删除确认由调用方负责，这里不再重复弹窗。 */
   onDeleteCategory: (id: string) => void;
-  onVerifyPassword?: (password: string) => Promise<boolean>;
+  /** 从右键菜单「编辑」进入时，直接进入该分类的编辑态。 */
   initialEditId?: string;
 }
+
+const inputClass = 'rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-sm text-ink outline-none focus:ring-2 focus:ring-accent';
 
 const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   isOpen,
@@ -22,31 +25,30 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   categories,
   onUpdateCategories,
   onDeleteCategory,
-  onVerifyPassword,
-  initialEditId
+  initialEditId,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   useModalA11y(isOpen, onClose, containerRef);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editPassword, setEditPassword] = useState('');
   const [editIcon, setEditIcon] = useState('');
-  
+  /** 新密码：留空表示保持原状。 */
+  const [editPassword, setEditPassword] = useState('');
+  const [removeLock, setRemoveLock] = useState(false);
+
   const [newCatName, setNewCatName] = useState('');
   const [newCatPassword, setNewCatPassword] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('Folder');
-  const [newCatColor, setNewCatColor] = useState<string | undefined>(undefined);
-  
-  const [isIconSelectorOpen, setIsIconSelectorOpen] = useState(false);
+
   const [iconSelectorTarget, setIconSelectorTarget] = useState<'edit' | 'new' | null>(null);
-  
-  // 分类操作验证相关状态
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<{
-    type: 'edit' | 'delete';
-    categoryId: string;
-    categoryName: string;
-  } | null>(null);
+
+  const startEdit = (cat: Category) => {
+    setEditingId(cat.id);
+    setEditName(cat.name);
+    setEditIcon(cat.icon);
+    setEditPassword('');
+    setRemoveLock(false);
+  };
 
   useEffect(() => {
     if (!isOpen || !initialEditId) return;
@@ -58,7 +60,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 
   const handleMove = (index: number, direction: 'up' | 'down') => {
     const newCats = [...categories];
-    // "常用推荐"锁定首位,不参与移动(#9)
+    // 「常用推荐」锁定首位，不参与移动
     if (newCats[index]?.id === 'common') return;
     if (direction === 'up' && index > 0) {
       if (newCats[index - 1]?.id === 'common') return;
@@ -69,348 +71,183 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     onUpdateCategories(newCats);
   };
 
-  // 处理密码验证
-  const handlePasswordVerification = async (password: string): Promise<boolean> => {
-    if (!onVerifyPassword) return true; // 如果没有提供验证函数，默认通过
-    
-    try {
-      const isValid = await onVerifyPassword(password);
-      return isValid;
-    } catch (error) {
-      console.error('Password verification error:', error);
-      return false;
-    }
-  };
-
-  // 处理编辑分类前的验证
-  const handleStartEdit = (cat: Category) => {
-    if (!onVerifyPassword) {
-      // 如果没有提供验证函数，直接编辑
-      startEdit(cat);
-      return;
-    }
-
-    // 设置待处理的操作
-    setPendingAction({
-      type: 'edit',
-      categoryId: cat.id,
-      categoryName: cat.name
-    });
-    
-    // 打开验证弹窗
-    setIsAuthModalOpen(true);
-  };
-
-  // 处理删除分类前的验证
-  const handleDeleteClick = (cat: Category) => {
-    if (!onVerifyPassword) {
-      // 如果没有提供验证函数，直接删除
-      if (confirm(`确定删除"${cat.name}"分类吗？该分类下的书签将移动到"常用推荐"。`)) {
-        onDeleteCategory(cat.id);
-      }
-      return;
-    }
-
-    // 设置待处理的操作
-    setPendingAction({
-      type: 'delete',
-      categoryId: cat.id,
-      categoryName: cat.name
-    });
-    
-    // 打开验证弹窗
-    setIsAuthModalOpen(true);
-  };
-
-  // 处理验证成功后的操作
-  const handleAuthSuccess = () => {
-    if (!pendingAction) return;
-
-    if (pendingAction.type === 'edit') {
-      const cat = categories.find(c => c.id === pendingAction.categoryId);
-      if (cat) {
-        startEdit(cat);
-      }
-    } else if (pendingAction.type === 'delete') {
-      const cat = categories.find(c => c.id === pendingAction.categoryId);
-      if (cat && confirm(`确定删除"${cat.name}"分类吗？该分类下的书签将移动到"常用推荐"。`)) {
-        onDeleteCategory(cat.id);
-      }
-    }
-
-    // 清除待处理的操作
-    setPendingAction(null);
-  };
-
-  // 处理验证弹窗关闭
-  const handleAuthModalClose = () => {
-    setIsAuthModalOpen(false);
-    setPendingAction(null);
-  };
-
-  const startEdit = (cat: Category) => {
-    setEditingId(cat.id);
-    setEditName(cat.name);
-    setEditPassword(cat.password || '');
-    setEditIcon(cat.icon);
-  };
-
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId || !editName.trim()) return;
-    const newCats = categories.map(c => c.id === editingId ? { 
-        ...c, 
-        name: editName.trim(),
-        icon: editIcon,
-        password: editPassword.trim() || undefined
-    } : c);
-    onUpdateCategories(newCats);
+    const nextHash = editPassword.trim() ? await hashCategoryPassword(editingId, editPassword.trim()) : undefined;
+    onUpdateCategories(categories.map(c => {
+      if (c.id !== editingId) return c;
+      const passwordHash = removeLock ? undefined : nextHash ?? c.passwordHash;
+      return { ...c, name: editName.trim(), icon: editIcon, passwordHash };
+    }));
     setEditingId(null);
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!newCatName.trim()) return;
+    const id = crypto.randomUUID?.() || Date.now().toString();
     const newCat: Category = {
-      id: Date.now().toString(),
+      id,
       name: newCatName.trim(),
       icon: newCatIcon,
-      color: newCatColor,
-      password: newCatPassword.trim() || undefined
+      passwordHash: newCatPassword.trim() ? await hashCategoryPassword(id, newCatPassword.trim()) : undefined,
     };
     onUpdateCategories([...categories, newCat]);
     setNewCatName('');
     setNewCatPassword('');
     setNewCatIcon('Folder');
-    setNewCatColor(undefined);
   };
 
-  const openIconSelector = (target: 'edit' | 'new') => {
-    setIconSelectorTarget(target);
-    setIsIconSelectorOpen(true);
-  };
-  
   const handleIconSelect = (iconName: string) => {
-    if (iconSelectorTarget === 'edit') {
-      setEditIcon(iconName);
-    } else if (iconSelectorTarget === 'new') {
-      setNewCatIcon(iconName);
-    }
-  };
-  
-  const cancelIconSelector = () => {
-    setIsIconSelectorOpen(false);
+    if (iconSelectorTarget === 'edit') setEditIcon(iconName);
+    else if (iconSelectorTarget === 'new') setNewCatIcon(iconName);
     setIconSelectorTarget(null);
   };
-  
 
   return (
-    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div ref={containerRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 dark:border-slate-700 flex flex-col max-h-[85vh]">
-        <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700">
-          <h3 className="text-lg font-semibold dark:text-white">分类管理</h3>
-          <button onClick={onClose} aria-label="关闭" className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
-            <X className="w-5 h-5 dark:text-slate-400" />
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-md">
+      <div ref={containerRef} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} className="float-surface flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 pb-2 pt-4">
+          <h3 className="text-[15px] font-semibold tracking-tight text-ink">分类管理</h3>
+          <button onClick={onClose} aria-label="关闭" className="rounded-full p-1 text-ink-muted transition-colors hover:bg-sunken hover:text-ink">
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="flex-1 space-y-1.5 overflow-y-auto px-5 pb-4">
           {categories.map((cat, index) => (
-            <div key={cat.id} className="flex flex-col p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg group gap-2">
-              <div className="flex items-center gap-2">
-                  {/* Order Controls */}
-                  <div className="flex flex-col gap-1 mr-2">
-                    <button
-                      onClick={() => handleMove(index, 'up')}
-                      disabled={index === 0}
-                      aria-label="上移分类"
-                      className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"
-                    >
-                      <ArrowUp size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleMove(index, 'down')}
-                      disabled={index === categories.length - 1}
-                      aria-label="下移分类"
-                      className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"
-                    >
-                      <ArrowDown size={14} />
-                    </button>
-                  </div>
+            <div key={cat.id} className="group flex items-start gap-2 rounded-lg bg-sunken p-2.5">
+              {/* 排序 */}
+              <div className="flex flex-col gap-0.5 pt-0.5">
+                <button onClick={() => handleMove(index, 'up')} disabled={index === 0} aria-label="上移分类" className="p-0.5 text-ink-muted hover:text-accent disabled:opacity-30">
+                  <ArrowUp size={13} />
+                </button>
+                <button onClick={() => handleMove(index, 'down')} disabled={index === categories.length - 1} aria-label="下移分类" className="p-0.5 text-ink-muted hover:text-accent disabled:opacity-30">
+                  <ArrowDown size={13} />
+                </button>
+              </div>
 
-                  <div className="flex items-center gap-2">
-                    {editingId === cat.id && cat.id !== 'common' ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          <Icon name={editIcon} size={16} />
-                          <input 
-                            type="text" 
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="flex-1 p-1.5 px-2 text-sm rounded border border-blue-500 dark:bg-slate-800 dark:text-white outline-none"
-                            placeholder="分类名称"
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                            onClick={() => openIconSelector('edit')}
-                            aria-label="选择图标"
-                 title="选择图标"
-                          >
-                            <Palette size={16} />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Lock size={14} className="text-slate-400" />
-                          <input 
-                            type="password" 
-                            value={editPassword}
-                            onChange={(e) => setEditPassword(e.target.value)}
-                            className="flex-1 p-1.5 px-2 text-sm rounded border border-blue-500 dark:bg-slate-800 dark:text-white outline-none"
-                            placeholder="密码（可选）"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <Icon name={cat.icon} size={16} />
-                        <span className="font-medium dark:text-slate-200 truncate">
-                          {cat.name}
-                          {cat.id === 'common' && (
-                            <span className="ml-2 text-xs text-slate-400">(默认分类，不可编辑)</span>
-                          )}
-                        </span>
-                        {cat.password && (
-                          <Lock size={12} className="text-slate-400" />
-                        )}
-                      </div>
-                    )}
+              <div className="min-w-0 flex-1">
+                {editingId === cat.id && cat.id !== 'common' ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <Icon name={editIcon} size={16} className="shrink-0 text-ink-soft" />
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && void saveEdit()}
+                        className={`${inputClass} flex-1`}
+                        placeholder="分类名称"
+                        autoFocus
+                      />
+                      <button type="button" onClick={() => setIconSelectorTarget('edit')} aria-label="选择图标" title="选择图标" className="p-1 text-ink-muted transition-colors hover:text-accent">
+                        <Palette size={16} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Lock size={14} className="shrink-0 text-ink-muted" />
+                      <input
+                        type="password"
+                        value={editPassword}
+                        onChange={(e) => setEditPassword(e.target.value)}
+                        disabled={removeLock}
+                        className={`${inputClass} flex-1 disabled:opacity-50`}
+                        placeholder={cat.passwordHash ? '输入新密码以修改，留空保持不变' : '设置显示锁密码（可选）'}
+                      />
+                      {cat.passwordHash && (
+                        <label className="flex shrink-0 items-center gap-1 text-xs text-ink-soft">
+                          <input type="checkbox" checked={removeLock} onChange={(e) => setRemoveLock(e.target.checked)} />
+                          移除密码
+                        </label>
+                      )}
+                    </div>
                   </div>
+                ) : (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Icon name={cat.icon} size={16} className="shrink-0 text-ink-soft" />
+                    <span className="truncate text-sm font-medium text-ink">{cat.name}</span>
+                    {cat.id === 'common' && <span className="text-xs text-ink-muted">默认分类，不可编辑</span>}
+                    {cat.passwordHash && <Lock size={12} className="shrink-0 text-warn" aria-label="已设置显示锁" />}
+                  </div>
+                )}
+              </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 self-start mt-1">
-                    {editingId === cat.id ? (
-                       <button onClick={saveEdit} aria-label="保存分类" className="text-green-500 hover:bg-green-50 dark:hover:bg-slate-600 p-1.5 rounded bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-600"><Check size={16}/></button>
-                    ) : (
-                       <>
-                        {cat.id !== 'common' && (
-                          <button onClick={() => handleStartEdit(cat)} aria-label="编辑分类" className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded">
-                              <Edit2 size={14} />
-                          </button>
-                        )}
-                        {/* 只有非"常用推荐"分类才显示删除按钮 */}
-                        {cat.id !== 'common' && (
-                            <button
-                            onClick={() => handleDeleteClick(cat)}
-                            aria-label="删除分类"
-                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"
-                            >
-                            <Trash2 size={14} />
-                            </button>
-                        )}
-                        {/* "常用推荐"分类显示锁定图标 */}
-                        {cat.id === 'common' && (
-                            <div className="p-1.5 text-slate-300" title="常用推荐分类不能被删除">
-                                <Lock size={14} />
-                            </div>
-                        )}
-                       </>
-                    )}
-                  </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {editingId === cat.id ? (
+                  <button onClick={() => void saveEdit()} aria-label="保存分类" className="rounded-md bg-raised p-1.5 text-accent shadow-sm ring-1 ring-line">
+                    <Check size={15} />
+                  </button>
+                ) : cat.id === 'common' ? (
+                  <span className="p-1.5 text-ink-muted" title="常用推荐分类不能被删除"><Lock size={14} /></span>
+                ) : (
+                  <>
+                    <button onClick={() => startEdit(cat)} aria-label="编辑分类" className="rounded-md p-1.5 text-ink-muted hover:bg-raised hover:text-accent">
+                      <Edit2 size={14} />
+                    </button>
+                    <button onClick={() => onDeleteCategory(cat.id)} aria-label="删除分类" className="rounded-md p-1.5 text-ink-muted hover:bg-raised hover:text-danger">
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}
         </div>
 
-        <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-           <label className="text-xs font-semibold text-slate-500 uppercase mb-2 block">添加新分类</label>
-           <div className="flex flex-col gap-2">
-             <div className="flex items-center gap-2">
-               <Icon name={newCatIcon} size={16} />
-               <input 
-                  type="text"
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  placeholder="分类名称"
-                  className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-               />
-               <button
-                 type="button"
-                 className="p-1 text-gray-500 hover:text-blue-600 transition-colors"
-                 onClick={() => openIconSelector('new')}
-                 aria-label="选择图标"
-                 title="选择图标"
-               >
-                 <Palette size={16} />
-               </button>
-             </div>
-             <div className="flex items-center gap-1.5 flex-wrap">
-               <span className="text-xs text-slate-400 mr-1">颜色</span>
-               <button type="button" onClick={() => setNewCatColor(undefined)} className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] text-slate-400 ${!newCatColor ? 'border-blue-500' : 'border-slate-300 dark:border-slate-600'}`} title="无颜色">✕</button>
-               {['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#64748b'].map(c => (
-                 <button key={c} type="button" onClick={() => setNewCatColor(c)} className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${newCatColor === c ? 'border-slate-800 dark:border-white' : 'border-transparent'}`} style={{ background: c }} title={c} />
-               ))}
-             </div>
-             <div className="flex gap-2">
-                 <div className="flex-1 relative">
-                    <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                        type="password"
-                        value={newCatPassword}
-                        onChange={(e) => setNewCatPassword(e.target.value)}
-                        placeholder="密码 (可选)"
-                        className="w-full pl-8 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                        onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-                    />
-                 </div>
-                 <button 
-                    onClick={handleAdd}
-                    disabled={!newCatName.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors flex items-center"
-                 >
-                   <Plus size={18} />
-                 </button>
-             </div>
-           </div>
-          
-          {/* 图标选择器弹窗 */}
-          {isIconSelectorOpen && (
-            <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-              <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-                <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
-                  <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-200">选择图标</h3>
-                  <button
-                    type="button"
-                    onClick={cancelIconSelector}
-                    className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-auto p-4">
-                  <IconSelector 
-                    onSelectIcon={(iconName) => {
-                      handleIconSelect(iconName);
-                      setIsIconSelectorOpen(false);
-                      setIconSelectorTarget(null);
-                    }}
-                  />
-                </div>
+        <div className="space-y-2 px-5 py-3" style={{ boxShadow: 'inset 0 0.5px 0 hsl(var(--line) / 0.8)' }}>
+          <label className="block text-[11px] font-semibold uppercase tracking-wider text-ink-muted">添加新分类</label>
+          <div className="flex items-center gap-2">
+            <Icon name={newCatIcon} size={16} className="shrink-0 text-ink-soft" />
+            <input
+              type="text"
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void handleAdd()}
+              placeholder="分类名称"
+              className={`${inputClass} flex-1`}
+            />
+            <button type="button" onClick={() => setIconSelectorTarget('new')} aria-label="选择图标" title="选择图标" className="p-1 text-ink-muted transition-colors hover:text-accent">
+              <Palette size={16} />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Lock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted" />
+              <input
+                type="password"
+                value={newCatPassword}
+                onChange={(e) => setNewCatPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void handleAdd()}
+                placeholder="显示锁密码（可选）"
+                className={`${inputClass} w-full pl-8`}
+              />
+            </div>
+            <button
+              onClick={() => void handleAdd()}
+              disabled={!newCatName.trim()}
+              aria-label="添加分类"
+              className="flex items-center rounded-lg bg-accent px-3 text-ink-inverse transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+        </div>
+
+        {iconSelectorTarget && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={() => setIconSelectorTarget(null)}>
+            <div className="float-surface flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 pb-2 pt-4">
+                <h3 className="text-[15px] font-semibold text-ink">选择图标</h3>
+                <button type="button" onClick={() => setIconSelectorTarget(null)} aria-label="关闭" className="rounded-full p-1 text-ink-muted hover:bg-sunken">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <IconSelector onSelectIcon={handleIconSelect} />
               </div>
             </div>
-          )}
-          
-          {/* 分类操作密码验证弹窗 */}
-          {isAuthModalOpen && pendingAction && (
-            <CategoryActionAuthModal
-              isOpen={isAuthModalOpen}
-              onClose={handleAuthModalClose}
-              onVerify={handlePasswordVerification}
-              onVerified={handleAuthSuccess}
-              actionType={pendingAction.type}
-              categoryName={pendingAction.categoryName}
-            />
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -11,7 +11,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/tests-10%20passing-3fb950)](#工程实践)
+[![Tests](https://img.shields.io/badge/tests-11%20passing-3fb950)](#工程实践)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [快速开始](#快速开始) · [设计语言](#设计语言) · [架构](#架构) · [工程实践](#工程实践)
@@ -108,7 +108,7 @@ npm run dev          # http://localhost:5173
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # node:test，10 个用例
+npm test             # node:test，11 个用例
 npm run build        # typecheck + vite build
 ```
 
@@ -292,8 +292,9 @@ $ npm test
 ✔ blocks private and loopback hosts while allowing public hosts
 ✔ reorders by order field and keeps the drag result visible
 ✔ refuses to treat corrupted KV data as an empty dataset
+✔ category lock stores only a salted hash and drops legacy plaintext passwords
 
-tests 10 · pass 10 · fail 0
+tests 11 · pass 11 · fail 0
 ```
 
 覆盖的是**容易悄悄坏掉的地方**：数据规范化、导入合并、冲突检测、R2 去重、版本回退、损坏数据保护、SSRF 白名单、拖拽序持久化。
@@ -329,7 +330,7 @@ tests 10 · pass 10 · fail 0
 - **KV 最终一致** — 跨实例并发写无法做到原子事务，只能检测后返回 409
 - **AI 需自行配置 Key** — 不提供公共额度，`OPENAI_API_KEY` / `GEMINI_API_KEY` 需在 Cloudflare 后台添加
 - **图标依赖外部可达性** — 站点本身没有 favicon 时回落到彩色首字母，这是预期行为
-- **分类密码只是显示锁** — 密码以明文随书签数据保存，只防同屏窥视，不加密数据本身
+- **分类密码只是显示锁** — 只保存加盐哈希，防同屏窥视，不加密书签数据本身
 
 ## License
 

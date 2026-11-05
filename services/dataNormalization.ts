@@ -9,7 +9,9 @@ const normalizeCategories = (value: unknown): Category[] => {
       if (seen.has(category.id)) return false;
       seen.add(category.id);
       return true;
-    });
+    })
+    // 旧版把分类密码明文存在 password 字段里，不再读取也不再存回
+    .map(({ password: _plaintext, ...category }: Category & { password?: unknown }) => category);
   if (!seen.has('common')) categories.unshift({ id: 'common', name: '常用推荐', icon: 'Star' });
   return categories;
 };

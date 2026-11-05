@@ -35,7 +35,9 @@ const cleanCategories = (value: unknown): Record<string, unknown>[] => {
       if (seen.has(id)) return false;
       seen.add(id);
       return true;
-    });
+    })
+    // 服务端同样丢弃旧版的明文分类密码，防止它被写进 KV 和 R2 备份
+    .map(({ password: _plaintext, ...category }) => category);
 
   if (!seen.has('common')) categories.unshift({ id: 'common', name: '常用推荐', icon: 'Star' });
   return categories;

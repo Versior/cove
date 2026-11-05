@@ -408,12 +408,6 @@ const App: React.FC = () => {
     loadLocal();
   };
 
-  const handleCategoryActionAuth = async (password: string) => {
-    const response = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }).catch(() => null);
-    if (!response?.ok) return false;
-    setAuthToken(true);
-    return true;
-  };
 
   /** 用 R2 最新备份覆盖当前数据，走正常同步流程（版本号递增，可再次被备份）。 */
   const restoreFromBackup = async () => {
@@ -496,7 +490,7 @@ const App: React.FC = () => {
   const isCategoryLocked = (categoryId: string): boolean => {
     const category = categories.find(item => item.id === categoryId);
     if (!category) return false;
-    if (category.password && !unlockedCategoryIds.has(category.id)) return true;
+    if (category.passwordHash && !unlockedCategoryIds.has(category.id)) return true;
     return category.parentId ? isCategoryLocked(category.parentId) : false;
   };
 
@@ -853,7 +847,7 @@ const App: React.FC = () => {
       onOpenSettings={() => openExclusive('settings')}
     />
       <CategoryAuthModal isOpen={!!lockedCategory} category={lockedCategory} onClose={() => setLockedCategory(null)} onUnlock={id => { setUnlockedCategoryIds(current => new Set(current).add(id)); setSelectedCategory(id); setLockedCategory(null); }} />
-      <CategoryManagerModal isOpen={isCategoryManagerOpen} onClose={() => { setIsCategoryManagerOpen(false); setCategoryManagerEditId(''); }} categories={categories} onUpdateCategories={handleUpdateCategories} onDeleteCategory={handleDeleteCategory} onVerifyPassword={handleCategoryActionAuth} initialEditId={categoryManagerEditId} />
+      <CategoryManagerModal isOpen={isCategoryManagerOpen} onClose={() => { setIsCategoryManagerOpen(false); setCategoryManagerEditId(''); }} categories={categories} onUpdateCategories={handleUpdateCategories} onDeleteCategory={handleDeleteCategory} initialEditId={categoryManagerEditId} />
       {/* 懒加载弹窗只在打开时挂载，各自一个 Suspense：首屏不必等这些 chunk，加载时也不会让整个桌面消失 */}
       {isImportOpen && <ModalErrorBoundary onClose={() => setIsImportOpen(false)}><Suspense fallback={null}><ImportModal isOpen onClose={() => setIsImportOpen(false)} existingLinks={links} categories={categories} onImport={handleImportConfirm} /></Suspense></ModalErrorBoundary>}
       {isSettingsOpen && <Suspense fallback={null}><SettingsModal isOpen onClose={() => { setIsSettingsOpen(false); setSettingsInitialTab(undefined); setAiSettingsCategoryId(''); setAiSettingsAction(''); }} config={aiConfig} siteSettings={siteSettings} onSave={handleSaveAIConfig} links={links} categories={categories} onUpdateLinks={next => updateData(next, categories)} onUpdateCategories={next => updateData(links, next)} onUpdateData={updateData} onEditLink={link => { setIsSettingsOpen(false); setEditingLink(link); setIsLinkModalOpen(true); }} onExportJson={() => saveExport('json')} lastBackup={lastBackup} onOpenImport={() => { setIsSettingsOpen(false); setSettingsInitialTab('backup'); setIsImportOpen(true); }} onRestoreBackup={authToken ? () => void restoreFromBackup() : undefined} initialAICategoryId={aiSettingsCategoryId} initialAIAction={aiSettingsAction || undefined} initialTab={settingsInitialTab} /></Suspense>}

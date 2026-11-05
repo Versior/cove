@@ -55,7 +55,8 @@ const release = () => {
   if (next) next();
 };
 
-const probe = async (src: string): Promise<string | null> => {
+/** 探测一张图能否加载，受全局并发闸门约束；成功返回地址，失败返回 null。 */
+export const probe = async (src: string): Promise<string | null> => {
   await acquire();
   try {
     return await new Promise<string | null>(resolve => {

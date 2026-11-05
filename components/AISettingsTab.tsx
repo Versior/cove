@@ -28,11 +28,11 @@ const makeId = (prefix: string) => `${prefix}-${crypto.randomUUID?.() || `${Date
 
 /** 分区外壳，统一标题与说明的视觉层级。 */
 const Section: React.FC<{ title: string; desc?: string; children: React.ReactNode; action?: React.ReactNode }> = ({ title, desc, children, action }) => (
-  <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/40 p-4 space-y-3">
+  <section className="rounded-xl border border-line bg-raised p-4 space-y-3">
     <div className="flex items-start justify-between gap-3">
       <div>
-        <h4 className="text-sm font-semibold text-slate-800 dark:text-white">{title}</h4>
-        {desc && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{desc}</p>}
+        <h4 className="text-sm font-semibold text-ink">{title}</h4>
+        {desc && <p className="mt-0.5 text-xs text-ink-muted">{desc}</p>}
       </div>
       {action}
     </div>
@@ -191,7 +191,7 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
   };
 
   const renameTargets = () => {
-    const editable = categories.filter(category => category.id !== 'common' && !category.password);
+    const editable = categories.filter(category => category.id !== 'common' && !category.passwordHash);
     if (renameScope === 'category' && categoryId) return editable.filter(category => category.id === categoryId);
     if (renameScope === 'all') return editable;
     return editable.filter(category => !category.parentId);
@@ -276,29 +276,29 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
                 onClick={() => applyPreset(preset)}
                 aria-pressed={active}
                 className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${active
-                  ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-900/30 dark:text-blue-300'
-                  : 'border-slate-200 text-slate-600 hover:border-blue-300 dark:border-slate-600 dark:text-slate-300'}`}
+                  ? 'border-accent bg-accent-soft text-accent-ink'
+                  : 'border-line text-ink-soft hover:border-accent/50'}`}
               >
                 {preset.label}
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-slate-400">
-          Secret：<code className="text-slate-500 dark:text-slate-400">{(AI_PRESETS.find(item => item.id === activePreset) || AI_PRESETS[0]).hint}</code>
+        <p className="text-[11px] text-ink-muted">
+          Secret：<code className="text-ink-muted">{(AI_PRESETS.find(item => item.id === activePreset) || AI_PRESETS[0]).hint}</code>
         </p>
 
         {config.provider === 'openai' && (
           <div>
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">Base URL</label>
+            <label className="block text-xs font-medium text-ink-muted mb-1.5">Base URL</label>
             <input
               value={config.baseUrl}
               onChange={event => onChange('baseUrl', event.target.value)}
-              className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-line-strong bg-raised px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-accent"
               placeholder="https://api.openai.com/v1"
             />
             {endpointPreview && (
-              <p className={`mt-1 break-all text-[11px] ${endpointPreview.startsWith('http') ? 'text-slate-500 dark:text-slate-400' : 'text-red-500'}`}>
+              <p className={`mt-1 break-all text-[11px] ${endpointPreview.startsWith('http') ? 'text-ink-muted' : 'text-danger'}`}>
                 最终地址：{endpointPreview}
               </p>
             )}
@@ -306,27 +306,27 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
         )}
 
         <div>
-          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">模型名称</label>
+          <label className="block text-xs font-medium text-ink-muted mb-1.5">模型名称</label>
           <input
             value={config.model}
             onChange={event => onChange('model', event.target.value)}
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-lg border border-line-strong bg-raised px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 dark:bg-slate-900/40 px-3 py-2">
-          <span className="text-xs text-slate-500 dark:text-slate-400">配置完成后先测一次接口</span>
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-sunken px-3 py-2">
+          <span className="text-xs text-ink-muted">配置完成后先测一次接口</span>
           <button
             onClick={testConnection}
             disabled={isProcessing}
-            className="shrink-0 rounded-lg bg-slate-900 dark:bg-slate-100 px-3 py-1.5 text-xs font-medium text-white dark:text-slate-900 disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-ink-inverse disabled:opacity-50"
           >
             测试连接
           </button>
         </div>
 
         {message && (
-          <p className={`rounded-lg px-3 py-2 text-xs ${messageTone === 'error' ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-300' : 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300'}`}>
+          <p className={`rounded-lg px-3 py-2 text-xs ${messageTone === 'error' ? 'bg-danger-soft text-danger' : 'bg-accent-soft text-accent-ink'}`}>
             {message}
           </p>
         )}
@@ -335,44 +335,44 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
       <Section title="批量操作" desc="逐条调用 AI，可随时停止；结果先预览再应用。">
         {isProcessing && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex items-center justify-between text-xs text-ink-muted">
               <span>{label} {progress.current}/{progress.total}</span>
-              <button onClick={() => setStop(true)} className="flex items-center gap-1 text-red-500">
+              <button onClick={() => setStop(true)} className="flex items-center gap-1 text-danger">
                 <PauseCircle size={13} />停止
               </button>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
-              <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${progressPercent}%` }} />
+            <div className="h-1.5 overflow-hidden rounded-full bg-sunken">
+              <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPercent}%` }} />
             </div>
           </div>
         )}
 
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={generateDescriptions} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-2 text-xs font-medium text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 disabled:opacity-40">
+          <button onClick={generateDescriptions} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 disabled:opacity-40">
             <Sparkles size={14} />补全描述
           </button>
-          <button onClick={generateCategories} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-2 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-40">
+          <button onClick={generateCategories} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-40">
             <FolderTree size={14} />生成分类
           </button>
-          <button onClick={renameFolders} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-2 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-40">
+          <button onClick={renameFolders} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-40">
             <Type size={14} />重命名分类
           </button>
-          <button onClick={suggestStructure} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-600 px-3 py-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-40">
+          <button onClick={suggestStructure} disabled={isProcessing} className="flex items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-40">
             <FolderPlus size={14} />拆分子分类
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-slate-100 dark:border-slate-700 pt-3">
+        <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">分类范围</label>
-            <select value={scope} onChange={event => setScope(event.target.value as Scope)} className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200">
+            <label className="block text-[11px] text-ink-muted mb-1">分类范围</label>
+            <select value={scope} onChange={event => setScope(event.target.value as Scope)} className="w-full rounded-lg border border-line-strong bg-raised px-2 py-1.5 text-xs text-ink">
               <option value="all">全部书签</option>
               <option value="category">指定分类</option>
             </select>
           </div>
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">重命名范围</label>
-            <select value={renameScope} onChange={event => setRenameScope(event.target.value as Scope)} className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200">
+            <label className="block text-[11px] text-ink-muted mb-1">重命名范围</label>
+            <select value={renameScope} onChange={event => setRenameScope(event.target.value as Scope)} className="w-full rounded-lg border border-line-strong bg-raised px-2 py-1.5 text-xs text-ink">
               <option value="all">全部分类</option>
               <option value="category">指定分类</option>
             </select>
@@ -381,8 +381,8 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
 
         {(scope === 'category' || renameScope === 'category') && (
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">目标分类</label>
-            <select value={categoryId} onChange={event => setCategoryId(event.target.value)} className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200">
+            <label className="block text-[11px] text-ink-muted mb-1">目标分类</label>
+            <select value={categoryId} onChange={event => setCategoryId(event.target.value)} className="w-full rounded-lg border border-line-strong bg-raised px-2 py-1.5 text-xs text-ink">
               <option value="">选择分类</option>
               {editableCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
@@ -391,8 +391,8 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
 
         {structurePreview === null && (
           <div>
-            <label className="block text-[11px] text-slate-400 mb-1">拆分子分类的父分类</label>
-            <select value={structureId} onChange={event => setStructureId(event.target.value)} className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-2 py-1.5 text-xs text-slate-700 dark:text-slate-200">
+            <label className="block text-[11px] text-ink-muted mb-1">拆分子分类的父分类</label>
+            <select value={structureId} onChange={event => setStructureId(event.target.value)} className="w-full rounded-lg border border-line-strong bg-raised px-2 py-1.5 text-xs text-ink">
               <option value="">选择分类</option>
               {editableCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
@@ -404,11 +404,11 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
         <Section
           title="分类预览"
           desc={`${categoryPreview.filter(item => item.to && item.to !== item.from).length} 条可应用`}
-          action={<button onClick={applyCategories} className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white"><Check size={12} />应用</button>}
+          action={<button onClick={applyCategories} className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1 text-xs font-medium text-white"><Check size={12} />应用</button>}
         >
           <div className="max-h-64 space-y-1 overflow-y-auto">
             {categoryPreview.map(item => (
-              <label key={item.id} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/40">
+              <label key={item.id} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-sunken">
                 <input
                   type="checkbox"
                   disabled={!item.to || item.to === item.from}
@@ -419,8 +419,8 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
                     return next;
                   })}
                 />
-                <span className="truncate text-slate-600 dark:text-slate-300">{item.title}</span>
-                <span className={`shrink-0 ${item.error ? 'text-red-500' : 'text-slate-400'}`}>{item.error || `${categoryName(item.from)} → ${categoryName(item.to)}`}</span>
+                <span className="truncate text-ink-soft">{item.title}</span>
+                <span className={`shrink-0 ${item.error ? 'text-danger' : 'text-ink-muted'}`}>{item.error || `${categoryName(item.from)} → ${categoryName(item.to)}`}</span>
               </label>
             ))}
           </div>
@@ -435,7 +435,7 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
         >
           <div className="max-h-64 space-y-1 overflow-y-auto">
             {renamePreview.map(item => (
-              <label key={item.id} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/40">
+              <label key={item.id} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-sunken">
                 <input
                   type="checkbox"
                   disabled={!item.to || item.to === item.from}
@@ -446,8 +446,8 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
                     return next;
                   })}
                 />
-                <span className="text-slate-600 dark:text-slate-300">{item.from}</span>
-                <span className={item.error ? 'text-red-500' : 'text-slate-400'}>→ {item.error || item.to}</span>
+                <span className="text-ink-soft">{item.from}</span>
+                <span className={item.error ? 'text-danger' : 'text-ink-muted'}>→ {item.error || item.to}</span>
               </label>
             ))}
           </div>
@@ -471,9 +471,9 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ config, onChange, links, 
                 <input
                   value={folder.name}
                   onChange={event => setStructurePreview(current => current ? { ...current, folders: current.folders.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) } : current)}
-                  className="flex-1 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-700 px-2 py-1 text-xs text-slate-700 dark:text-slate-200"
+                  className="flex-1 rounded border border-line-strong bg-raised px-2 py-1 text-xs text-ink"
                 />
-                <span className="shrink-0 text-slate-400">{folder.linkIds.length} 个</span>
+                <span className="shrink-0 text-ink-muted">{folder.linkIds.length} 个</span>
               </div>
             ))}
           </div>
